@@ -11,6 +11,7 @@ export const metadata = {
   title: '100Gigs - Port Harcourt Gig Marketplace',
   description: 'Find skilled service providers or get hired in Port Harcourt, Nigeria',
   manifest: '/manifest.json',
+  themeColor: '#16a34a',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
@@ -21,23 +22,20 @@ export const metadata = {
   },
 };
 
-// Move themeColor here (this fixes the warning)
-export const viewport = {
-  themeColor: '#16a34a',
-};
-
+ 
 export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.className} bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100`}>
         <Providers>
           <ThemeProvider>
-            <Navbar />
             <main>{children}</main>
+            <Navbar />
             <Toaster position="top-center" richColors />
           </ThemeProvider>
         </Providers>
       </body>
     </html>
   );
-} 
+}
+ 
