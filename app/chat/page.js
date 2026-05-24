@@ -5,8 +5,9 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { MessageCircle, Send, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
+import { Suspense } from 'react';
 
-export default function ChatPage() {
+function ChatContent() {
   const { data: session, status } = useSession();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -343,5 +344,18 @@ export default function ChatPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// === ONLY ONE EXPORT DEFAULT ===
+export default function ChatPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-screen bg-[#080f0a]">
+        <div className="w-10 h-10 rounded-full border-2 border-green-500/20 border-t-green-500 animate-spin" />
+      </div>
+    }>
+      <ChatContent />
+    </Suspense>
   );
 }

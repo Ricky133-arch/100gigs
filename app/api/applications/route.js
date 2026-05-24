@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import connectDB from '@/lib/mongodb';
 import Application from '@/models/Application';
 import Job from '@/models/Job';
-import { authOptions } from '../auth/[...nextauth]/route';
+import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { sendNotificationToUser } from '@/lib/sendNotification';
 
 export async function GET() {
