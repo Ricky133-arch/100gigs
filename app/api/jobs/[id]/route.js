@@ -4,7 +4,7 @@ import Job from '@/models/Job';
 
 export async function GET(request, { params }) {
   try {
-    const { id } = await params; // ✅ await params
+    const { id } = await params;
     await connectDB();
 
     const job = await Job.findById(id)
@@ -12,6 +12,12 @@ export async function GET(request, { params }) {
 
     if (!job) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+    }
+
+    // ── Auto-close if deadline has passed ─────────────────────────────────
+    if (job.deadline && new Date(job.deadline) < new Date() && job.status === 'open') {
+      job.status = 'closed';
+      await job.save();
     }
 
     return NextResponse.json(job);
@@ -23,7 +29,7 @@ export async function GET(request, { params }) {
 
 export async function PATCH(request, { params }) {
   try {
-    const { id } = await params; // ✅ await params
+    const { id } = await params;
     await connectDB();
 
     const body = await request.json();
@@ -42,7 +48,7 @@ export async function PATCH(request, { params }) {
 
 export async function DELETE(request, { params }) {
   try {
-    const { id } = await params; // ✅ await params
+    const { id } = await params;
     await connectDB();
 
     const job = await Job.findByIdAndDelete(id);

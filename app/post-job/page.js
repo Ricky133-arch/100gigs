@@ -20,6 +20,28 @@ const LOCATIONS = [
   'Port Harcourt City', 'Asari-Toru', 'Other'
 ];
 
+const glassCard = {
+  background: 'rgba(255,255,255,0.04)',
+  border: '1px solid rgba(255,255,255,0.08)',
+  backdropFilter: 'blur(12px)',
+  WebkitBackdropFilter: 'blur(12px)',
+};
+
+function Section({ icon: Icon, title, children }) {
+  return (
+    <div className="p-6 rounded-2xl" style={glassCard}>
+      <div className="flex items-center gap-2.5 mb-5">
+        <div className="w-7 h-7 rounded-lg flex items-center justify-center"
+          style={{ background: 'rgba(74,222,128,0.12)' }}>
+          <Icon size={14} className="text-green-400" />
+        </div>
+        <p className="text-sm font-semibold text-white">{title}</p>
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export default function PostJob() {
   const { data: session, status } = useSession();
   const router = useRouter();
@@ -144,13 +166,6 @@ export default function PostJob() {
     }
   };
 
-  const glassCard = {
-    background: 'rgba(255,255,255,0.04)',
-    border: '1px solid rgba(255,255,255,0.08)',
-    backdropFilter: 'blur(12px)',
-    WebkitBackdropFilter: 'blur(12px)',
-  };
-
   const inputStyle = {
     background: 'rgba(255,255,255,0.06)',
     border: '1px solid rgba(255,255,255,0.1)',
@@ -162,18 +177,7 @@ export default function PostJob() {
   const onBlur  = e => e.target.style.borderColor = 'rgba(255,255,255,0.1)';
   const labelClass = "block text-xs font-semibold uppercase tracking-widest text-white/40 mb-2";
 
-  const Section = ({ icon: Icon, title, children }) => (
-    <div className="p-6 rounded-2xl" style={glassCard}>
-      <div className="flex items-center gap-2.5 mb-5">
-        <div className="w-7 h-7 rounded-lg flex items-center justify-center"
-          style={{ background: 'rgba(74,222,128,0.12)' }}>
-          <Icon size={14} className="text-green-400" />
-        </div>
-        <p className="text-sm font-semibold text-white">{title}</p>
-      </div>
-      {children}
-    </div>
-  );
+
 
   return (
     <div className="min-h-screen bg-[#080f0a] relative overflow-x-hidden">

@@ -52,6 +52,18 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 });
     }
 
+    // ── Block if job is closed ─────────────────────────────────────────────
+    if (job.status !== 'open') {
+      return NextResponse.json({ error: 'This job is no longer accepting applications' }, { status: 400 });
+    }
+
+    // ── Block if deadline has passed ───────────────────────────────────────
+    if (job.deadline && new Date(job.deadline) < new Date()) {
+      // Also close the job in DB while we're here
+      await Job.findByIdAndUpdate(jobId, { status: 'closed' });
+      return NextResponse.json({ error: 'This job deadline has passed' }, { status: 400 });
+    }
+
     const existingApplication = await Application.findOne({
       job: jobId,
       applicant: session.user.id,
@@ -72,7 +84,7 @@ export async function POST(request) {
       $addToSet: { applicants: session.user.id }
     });
 
-    // ✅ Notify the client that someone applied to their job
+    // ── Notify the client ──────────────────────────────────────────────────
     try {
       await sendNotificationToUser(job.postedBy.toString(), {
         title: '🔔 New Application!',
@@ -81,7 +93,6 @@ export async function POST(request) {
       });
     } catch (notifError) {
       console.error('Notification error:', notifError);
-      // Don't fail the request if notification fails
     }
 
     return NextResponse.json({
