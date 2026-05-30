@@ -55,7 +55,6 @@ const fetchConversations = async () => {
     const res = await fetch('/api/chat');
     if (!res.ok) return;
     const data = await res.json();
-    // ✅ Handle new response format
     setConversations(Array.isArray(data) ? data : (data.conversations || []));
   } catch (err) { console.error(err); }
   finally { setLoading(false); }
@@ -203,66 +202,72 @@ const fetchConversations = async () => {
                 </div>
               ) : (
                 conversations.map(conv => {
-  const other = conv.sender?._id === session?.user?.id ? conv.receiver : conv.sender;
-  if (!other) return null;
-  const isActive = activeChat?.otherId === other._id;
-  const unread = conv.unreadCount || 0;
+                  const other = conv.sender?._id === session?.user?.id ? conv.receiver : conv.sender;
+                  if (!other) return null;
+                  const isActive = activeChat?.otherId === other._id;
+                  const unread = conv.unreadCount || 0;
+                  const hasUnread = unread > 0 && !isActive;
 
-  return (
-    <button key={conv._id} onClick={() => openConversation(conv)}
-      className="w-full px-4 py-3.5 flex items-center gap-3 text-left border-b transition-all"
-      style={{
-        borderColor: 'rgba(255,255,255,0.05)',
-        background: isActive
-          ? 'rgba(74,222,128,0.08)'
-          : unread > 0
-          ? 'rgba(74,222,128,0.04)' // ✅ subtle green tint for unread
-          : 'transparent',
-      }}
-      onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
-      onMouseLeave={e => {
-        if (!isActive) e.currentTarget.style.background = unread > 0
-          ? 'rgba(74,222,128,0.04)'
-          : 'transparent';
-      }}
-    >
-      <div className="relative">
-        <div className="w-9 h-9 rounded-full bg-green-500 flex items-center justify-center text-white text-sm font-bold shrink-0">
-          {other.name?.charAt(0).toUpperCase()}
-        </div>
-        {/* ✅ Online dot */}
-        <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 bg-green-400"
-          style={{ borderColor: 'rgba(8,15,10,1)' }} />
-      </div>
+                  return (
+                    <button key={conv._id} onClick={() => openConversation(conv)}
+                      className="w-full px-4 py-3.5 flex items-center gap-3 text-left border-b transition-all relative"
+                      style={{
+                        borderColor: 'rgba(255,255,255,0.05)',
+                        background: isActive
+                          ? 'rgba(74,222,128,0.08)'
+                          : hasUnread
+                          ? 'rgba(74,222,128,0.07)'
+                          : 'transparent',
+                        // Green left border accent for unread
+                        borderLeft: hasUnread ? '3px solid #16a34a' : '3px solid transparent',
+                      }}
+                      onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = hasUnread ? 'rgba(74,222,128,0.11)' : 'rgba(255,255,255,0.03)'; }}
+                      onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = hasUnread ? 'rgba(74,222,128,0.07)' : 'transparent'; }}
+                    >
+                      <div className="relative shrink-0">
+                        <div className="w-9 h-9 rounded-full bg-green-500 flex items-center justify-center text-white text-sm font-bold">
+                          {other.name?.charAt(0).toUpperCase()}
+                        </div>
+                        <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 bg-green-400"
+                          style={{ borderColor: 'rgba(8,15,10,1)' }} />
+                      </div>
 
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between mb-0.5">
-          <p className="text-sm font-medium text-white truncate">{other.name}</p>
-          <p className="text-[11px] shrink-0 ml-2" style={{ color: 'rgba(255,255,255,0.2)' }}>
-            {formatDistanceToNow(new Date(conv.createdAt), { addSuffix: false })}
-          </p>
-        </div>
-        <div className="flex items-center justify-between">
-          {/* ✅ Bold preview for unread */}
-          <p className="text-xs truncate"
-            style={{
-              color: unread > 0 ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.3)',
-              fontWeight: unread > 0 ? '500' : '400',
-            }}>
-            {conv.content}
-          </p>
-          {/* ✅ Unread badge */}
-          {unread > 0 && (
-            <span className="ml-2 shrink-0 min-w-[18px] h-[18px] rounded-full flex items-center justify-center text-[10px] font-bold text-white px-1"
-              style={{ background: '#16a34a' }}>
-              {unread > 99 ? '99+' : unread}
-            </span>
-          )}
-        </div>
-      </div>
-    </button>
-  );
-})
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between mb-0.5">
+                          {/* Name: green + bold when unread */}
+                          <p className="text-sm truncate"
+                            style={{
+                              color: hasUnread ? '#4ade80' : 'rgba(255,255,255,0.85)',
+                              fontWeight: hasUnread ? '700' : '500',
+                            }}>
+                            {other.name}
+                          </p>
+                          <p className="text-[11px] shrink-0 ml-2"
+                            style={{ color: hasUnread ? 'rgba(74,222,128,0.6)' : 'rgba(255,255,255,0.2)' }}>
+                            {formatDistanceToNow(new Date(conv.createdAt), { addSuffix: false })}
+                          </p>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          {/* Message preview: brighter + bold when unread */}
+                          <p className="text-xs truncate"
+                            style={{
+                              color: hasUnread ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.3)',
+                              fontWeight: hasUnread ? '600' : '400',
+                            }}>
+                            {conv.content}
+                          </p>
+                          {/* Unread count badge */}
+                          {hasUnread && (
+                            <span className="shrink-0 min-w-[18px] h-[18px] rounded-full flex items-center justify-center text-[10px] font-bold text-white px-1"
+                              style={{ background: '#16a34a', boxShadow: '0 0 0 2px rgba(8,15,10,0.8)' }}>
+                              {unread > 99 ? '99+' : unread}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })
               )}
             </div>
           </div>
@@ -382,7 +387,6 @@ const fetchConversations = async () => {
   );
 }
 
-// === ONLY ONE EXPORT DEFAULT ===
 export default function ChatPage() {
   return (
     <Suspense fallback={
