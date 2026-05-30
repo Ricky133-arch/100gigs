@@ -31,7 +31,39 @@ export async function GET() {
       }
     });
 
-    return NextResponse.json(Object.values(conversations));
+    // ✅ Count total unread messages for this user
+    const totalUnread = await Message.countDocuments({
+      receiver: session.user.id,
+      seen: false,
+    });
+
+    // ✅ Count unread per conversation
+    const unreadPerConv = await Message.aggregate([
+      {
+        $match: {
+          receiver: session.user.id,
+          seen: false,
+        },
+      },
+      {
+        $group: {
+          _id: '$conversationId',
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const unreadMap = {};
+    unreadPerConv.forEach(item => {
+      unreadMap[item._id] = item.count;
+    });
+
+    const convList = Object.values(conversations).map(conv => ({
+      ...conv.toObject(),
+      unreadCount: unreadMap[conv.conversationId] || 0,
+    }));
+
+    return NextResponse.json({ conversations: convList, totalUnread });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: 'Failed to fetch conversations' }, { status: 500 });

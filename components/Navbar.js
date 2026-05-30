@@ -11,6 +11,25 @@ export default function Navbar() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const pathname = usePathname();
 
+const [totalUnread, setTotalUnread] = useState(0);
+
+useEffect(() => {
+  if (!session) return;
+  fetchUnreadCount();
+  // Poll every 10 seconds
+  const interval = setInterval(fetchUnreadCount, 10000);
+  return () => clearInterval(interval);
+}, [session]);
+
+const fetchUnreadCount = async () => {
+  try {
+    const res = await fetch('/api/chat');
+    if (!res.ok) return;
+    const data = await res.json();
+    setTotalUnread(data.totalUnread || 0);
+  } catch (e) { console.error(e); }
+};
+
   useEffect(() => setUserMenuOpen(false), [pathname]);
 if (!session) return null
   const isActive = (href) => pathname === href;
@@ -62,7 +81,31 @@ if (!session) return null
           <TabItem href="/post-job" icon={PlusCircle} label="Post Job" />
         )}
 
-        {session && <TabItem href="/chat" icon={MessageCircle} label="Messages" />}
+        {session && (
+          <Link
+            href="/chat"
+            className="flex flex-col items-center justify-center gap-1 flex-1 py-2 transition-all duration-150 relative"
+            style={{ color: isActive('/chat') ? 'var(--nav-icon-active)' : 'var(--nav-icon)' }}
+          >
+            {isActive('/chat') && (
+              <span className="absolute top-0 left-1/2 -translate-x-1/2 w-6 h-0.5 rounded-full"
+                style={{ background: 'var(--nav-indicator)' }} />
+            )}
+            <div className="relative">
+              <MessageCircle size={22} strokeWidth={isActive('/chat') ? 2.2 : 1.6} />
+              {totalUnread > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white px-1"
+                  style={{ background: '#16a34a', boxShadow: '0 0 0 2px rgba(20,20,28,0.8)' }}>
+                  {totalUnread > 99 ? '99+' : totalUnread}
+                </span>
+              )}
+            </div>
+            <span className="text-[10px] font-medium tracking-wide"
+              style={{ color: isActive('/chat') ? 'var(--nav-label-active)' : 'var(--nav-label)' }}>
+              Messages
+            </span>
+          </Link>
+        )}
 
         {/* Profile / Auth */}
         {session ? (
