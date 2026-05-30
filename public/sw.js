@@ -1,4 +1,4 @@
-const CACHE_NAME = '100gigs-v3';
+const CACHE_NAME = '100gigs-v4';
 const STATIC_ASSETS = [
   '/',
   '/browse',
@@ -69,13 +69,19 @@ self.addEventListener('push', (event) => {
     actions: data.actions || [],
   };
   event.waitUntil(
-    self.registration.showNotification(data.title, options)
+    Promise.all([
+      self.registration.showNotification(data.title, options),
+      // Set badge on app icon
+      navigator.setAppBadge?.(1).catch(() => {}),
+    ])
   );
 });
 
 // ─── Notification Click ────────────────────────────────────────────────────────
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  // Clear badge when user taps notification
+  navigator.clearAppBadge?.().catch(() => {});
   const url = event.notification.data?.url || '/';
   event.waitUntil(
     clients
