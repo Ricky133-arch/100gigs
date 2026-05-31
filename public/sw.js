@@ -1,4 +1,4 @@
-const CACHE_NAME = '100gigs-v4';
+const CACHE_NAME = '100gigs-v5';
 const STATIC_ASSETS = [
   '/',
   '/browse',
@@ -63,7 +63,7 @@ self.addEventListener('push', (event) => {
   const options = {
     body: data.body,
     icon: '/icons/icon-192x192.png',
-    badge: '/icons/icon-72x72.png',
+    badge: '/icons/icon-192x192.png',
     vibrate: [100, 50, 100],
     data: { url: data.url || '/' },
     actions: data.actions || [],
@@ -71,8 +71,7 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     Promise.all([
       self.registration.showNotification(data.title, options),
-      // Set badge on app icon
-      navigator.setAppBadge?.(1).catch(() => {}),
+      navigator.setAppBadge?.(data.unreadCount || 1).catch(() => {}),
     ])
   );
 });
@@ -80,7 +79,6 @@ self.addEventListener('push', (event) => {
 // ─── Notification Click ────────────────────────────────────────────────────────
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  // Clear badge when user taps notification
   navigator.clearAppBadge?.().catch(() => {});
   const url = event.notification.data?.url || '/';
   event.waitUntil(

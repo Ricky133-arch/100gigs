@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import connectDB from '@/lib/mongodb';
 import Message from '@/models/Message';
 import { authOptions } from '../auth/[...nextauth]/route';
+import { sendNotificationToUser } from '@/lib/sendNotification';
 
 export async function GET() {
   try {
@@ -31,13 +32,13 @@ export async function GET() {
       }
     });
 
-    // ✅ Count total unread messages for this user
+    // Count total unread messages for this user
     const totalUnread = await Message.countDocuments({
       receiver: session.user.id,
       seen: false,
     });
 
-    // ✅ Count unread per conversation
+    // Count unread per conversation
     const unreadPerConv = await Message.aggregate([
       {
         $match: {
@@ -94,6 +95,23 @@ export async function POST(request) {
 
     const populated = await Message.findById(message._id)
       .populate('sender', 'name avatar');
+
+    // ── Send push notification to receiver ────────────────────────────────
+    try {
+      const unreadCount = await Message.countDocuments({
+        receiver: receiverId,
+        seen: false,
+      });
+
+      await sendNotificationToUser(receiverId, {
+        title: `💬 ${session.user.name}`,
+        body: content.length > 80 ? content.substring(0, 80) + '...' : content,
+        url: `/chat?to=${session.user.id}&name=${encodeURIComponent(session.user.name)}`,
+        unreadCount,
+      });
+    } catch (pushError) {
+      console.error('Push notification failed:', pushError.message);
+    }
 
     return NextResponse.json(populated, { status: 201 });
   } catch (error) {
