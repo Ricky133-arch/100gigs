@@ -72,8 +72,8 @@ export default function PostJob() {
 
   if (!session) return null;
 
-  if (session.user.role !== 'client') {
-    return (
+  if (!['client', 'admin'].includes(session?.user?.role)) {
+  return (
       <div className="min-h-screen bg-[#080f0a] flex items-center justify-center px-4">
         <div className="text-center p-10 rounded-3xl max-w-md w-full"
           style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>

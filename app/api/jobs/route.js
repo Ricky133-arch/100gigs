@@ -76,9 +76,12 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    if (session.user.role !== 'client') {
-      return NextResponse.json({ error: 'Only clients can post jobs' }, { status: 403 });
-    }
+   if (session.user.role !== "client" && session.user.role !== "admin") {
+  return NextResponse.json(
+    { error: "Only clients and admins can post jobs" },
+    { status: 403 }
+  );
+}
 
     const body = await request.json();
     const { title, description, category, budgetMin, budgetMax, location, deadline, images } = body;

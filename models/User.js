@@ -5,12 +5,24 @@ const UserSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true },
   password: { type: String, required: true, minlength: 6 },
   phone: { type: String },
-  role: { type: String, enum: ['client', 'provider'], required: true },
+  role: { type: String, enum: ['client', 'provider', 'admin'], required: true },
   bio: { type: String },
   skills: [{ type: String }],
   location: { type: String },
   avatar: { type: String },
   portfolio: [{ type: String }],
+
+  // ─── Verification (providers only) ──────────────────────────────────
+  verificationStatus: {
+    type: String,
+    enum: ['unsubmitted', 'pending', 'verified', 'rejected'],
+    default: 'unsubmitted',
+  },
+  verificationDoc: { type: String },          // Cloudinary/S3 URL of uploaded ID
+  verificationSubmittedAt: { type: Date },
+  verificationReviewedAt: { type: Date },
+  verificationRejectionReason: { type: String },
+  verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // which admin verified
 }, { timestamps: true });
 
 export default mongoose.models.User || mongoose.model('User', UserSchema);

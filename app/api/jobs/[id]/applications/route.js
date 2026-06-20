@@ -17,7 +17,7 @@ export async function GET(request, { params }) {
     await connectDB();
 
     const applications = await Application.find({ job: id })
-      .populate('applicant', 'name phone location skills avatar')
+      .populate('applicant', 'name phone location skills avatar verificationStatus')
       .sort({ createdAt: -1 });
 
     return NextResponse.json(applications);
@@ -32,7 +32,8 @@ export async function PATCH(request, { params }) {
     const { id } = await params;
     const session = await getServerSession(authOptions);
 
-    if (!session || session.user.role !== 'client') {
+    // ── Allow both clients and admins to manage applications ──────────
+    if (!session || (session.user.role !== 'client' && session.user.role !== 'admin')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 

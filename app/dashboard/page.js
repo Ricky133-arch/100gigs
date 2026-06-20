@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   Briefcase, MessageCircle, Clock, Plus,
-  Users, CheckCircle, XCircle, MapPin, ArrowRight, Sparkles
+  Users, CheckCircle, XCircle, MapPin, ArrowRight, Sparkles,
+  ShieldCheck, ShieldAlert
 } from 'lucide-react';
 
 export default function Dashboard() {
@@ -12,6 +13,7 @@ export default function Dashboard() {
   const [myJobs, setMyJobs] = useState([]);
   const [myApplications, setMyApplications] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [verification, setVerification] = useState(null);
 
   useEffect(() => {
     if (session) fetchDashboardData();
@@ -20,7 +22,7 @@ export default function Dashboard() {
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      if (session.user.role === 'client') {
+      if (session.user.role === 'client' || session.user.role === 'admin') {
         const res = await fetch('/api/jobs/my-jobs');
         if (!res.ok) { setMyJobs([]); return; }
         const data = await res.json();
@@ -30,6 +32,10 @@ export default function Dashboard() {
         if (!res.ok) { setMyApplications([]); return; }
         const data = await res.json();
         setMyApplications(Array.isArray(data) ? data : []);
+
+        // Fetch verification status for providers
+        const vRes = await fetch('/api/verification/upload');
+        if (vRes.ok) setVerification(await vRes.json());
       }
     } catch (err) {
       console.error('Failed to load dashboard', err);
@@ -69,7 +75,9 @@ export default function Dashboard() {
     WebkitBackdropFilter: 'blur(12px)',
   };
 
-  const statCards = session.user.role === 'client' ? [
+  const isClientLike = session.user.role === 'client' || session.user.role === 'admin';
+
+  const statCards = isClientLike ? [
     { icon: Briefcase,      label: 'Total Jobs',       value: myJobs.length,    color: 'rgba(74,222,128,0.15)',  iconColor: '#4ade80' },
     { icon: CheckCircle,    label: 'Open Jobs',        value: openJobs,         color: 'rgba(96,165,250,0.15)',  iconColor: '#60a5fa' },
     { icon: Users,          label: 'Total Applicants', value: totalApplicants,  color: 'rgba(251,191,36,0.15)',  iconColor: '#fbbf24' },
@@ -80,6 +88,48 @@ export default function Dashboard() {
     { icon: CheckCircle,    label: 'Accepted', value: acceptedApps,          color: 'rgba(74,222,128,0.15)',  iconColor: '#4ade80' },
     { icon: MessageCircle,  label: 'Messages', value: '→',                   color: 'rgba(167,139,250,0.15)', iconColor: '#a78bfa', href: '/chat' },
   ];
+
+  // Only nudge providers who haven't successfully verified yet
+  const showVerificationPrompt =
+    session.user.role === 'provider' &&
+    verification &&
+    verification.verificationStatus !== 'verified';
+
+  const verificationBannerContent = () => {
+    const s = verification?.verificationStatus;
+    if (s === 'pending') {
+      return {
+        icon: Clock,
+        color: '#facc15',
+        bg: 'rgba(250,204,21,0.08)',
+        border: 'rgba(250,204,21,0.2)',
+        title: 'Verification pending review',
+        body: 'An admin is reviewing your submitted document. This usually takes 1-2 business days.',
+        cta: 'View Status',
+      };
+    }
+    if (s === 'rejected') {
+      return {
+        icon: ShieldAlert,
+        color: '#f87171',
+        bg: 'rgba(248,113,113,0.08)',
+        border: 'rgba(248,113,113,0.2)',
+        title: 'Verification needs attention',
+        body: verification?.verificationRejectionReason || 'Your document was rejected. Please re-submit.',
+        cta: 'Re-submit',
+      };
+    }
+    // unsubmitted
+    return {
+      icon: ShieldCheck,
+      color: '#4ade80',
+      bg: 'rgba(74,222,128,0.08)',
+      border: 'rgba(74,222,128,0.2)',
+      title: 'Get verified to stand out',
+      body: 'Clients trust verified providers more. Upload a quick ID check to earn your badge.',
+      cta: 'Get Verified',
+    };
+  };
 
   return (
     <div className="min-h-screen bg-[#080f0a] relative overflow-x-hidden">
@@ -121,6 +171,30 @@ export default function Dashboard() {
           <p className="text-white/30 text-sm mt-1 capitalize">{session.user.role} account</p>
         </div>
 
+        {/* ── Verification banner (providers only, unless verified) ── */}
+        {showVerificationPrompt && (() => {
+          const banner = verificationBannerContent();
+          const Icon = banner.icon;
+          return (
+            <Link href="/verification"
+              className="flex items-center gap-4 p-5 rounded-2xl mb-6 opacity-0 fade-up transition hover:brightness-110"
+              style={{ background: banner.bg, border: `1px solid ${banner.border}` }}>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                style={{ background: `${banner.color}22` }}>
+                <Icon size={20} style={{ color: banner.color }} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-white">{banner.title}</p>
+                <p className="text-xs text-white/40 mt-0.5">{banner.body}</p>
+              </div>
+              <span className="flex items-center gap-1 text-xs font-semibold shrink-0"
+                style={{ color: banner.color }}>
+                {banner.cta} <ArrowRight size={13} />
+              </span>
+            </Link>
+          );
+        })()}
+
         {/* Stat Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
           {statCards.map((s, i) => (
@@ -148,7 +222,7 @@ export default function Dashboard() {
 
           {/* Main content */}
           <div className="md:col-span-8 opacity-0 fade-up d3">
-            {session.user.role === 'client' ? (
+            {isClientLike ? (
               <>
                 <div className="flex justify-between items-center mb-5">
                   <h2 className="text-lg font-semibold text-white">My Posted Jobs</h2>
@@ -311,7 +385,7 @@ export default function Dashboard() {
             <div className="p-5 rounded-2xl" style={glassCard}>
               <p className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-4">Quick Actions</p>
               <div className="space-y-1">
-                {session.user.role === 'client' ? (
+                {isClientLike ? (
                   <>
                     <Link href="/post-job" className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-white/70 hover:text-white hover:bg-white/5 transition">
                       <Plus size={16} className="text-green-400" /> Post a New Job
@@ -327,6 +401,16 @@ export default function Dashboard() {
                     </Link>
                     <Link href="/profile" className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-white/70 hover:text-white hover:bg-white/5 transition">
                       <Users size={16} className="text-green-400" /> Update Profile
+                    </Link>
+                    <Link href="/verification" className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-white/70 hover:text-white hover:bg-white/5 transition">
+                      <ShieldCheck size={16} className="text-green-400" />
+                      Get Verified
+                      {verification?.verificationStatus === 'verified' && (
+                        <span className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                          style={{ background: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.25)' }}>
+                          Done
+                        </span>
+                      )}
                     </Link>
                   </>
                 )}
@@ -344,7 +428,7 @@ export default function Dashboard() {
               <MessageCircle size={20} className="text-green-400 mb-3" />
               <p className="text-white font-semibold text-sm mb-1">Messages</p>
               <p className="text-white/40 text-xs mb-4">
-                View your conversations with {session.user.role === 'client' ? 'service providers' : 'clients'}.
+                View your conversations with {isClientLike ? 'service providers' : 'clients'}.
               </p>
               <Link href="/chat"
                 className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-semibold text-white transition"

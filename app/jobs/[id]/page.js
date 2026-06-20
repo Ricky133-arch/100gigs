@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 import { MapPin, Clock, MessageCircle, Users, CheckCircle, XCircle, Star, ArrowRight, Loader2, Briefcase } from 'lucide-react';
 import { toast } from 'sonner';
 import Link from 'next/link';
+import VerifiedBadge from '@/components/VerifiedBadge';
 
 const glass = {
   background: 'rgba(255,255,255,0.04)',
@@ -21,6 +22,9 @@ const inputStyle = {
 
 const onFocus = e => e.target.style.borderColor = 'rgba(74,222,128,0.5)';
 const onBlur  = e => e.target.style.borderColor = 'rgba(255,255,255,0.1)';
+
+// ── Helper: treat admin the same as client for application management ──
+const canManageApplications = (role) => role === 'client' || role === 'admin';
 
 export default function JobDetails() {
   const { id } = useParams();
@@ -49,7 +53,8 @@ export default function JobDetails() {
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
       setJob(data);
-      if (session?.user?.role === 'client') await fetchApplications();
+      // ── Admins can also view applications, same as the job's client ──
+      if (canManageApplications(session?.user?.role)) await fetchApplications();
     } catch { toast.error('Failed to load job'); }
     finally { setLoading(false); }
   };
@@ -255,8 +260,8 @@ export default function JobDetails() {
           </div>
         )}
 
-        {/* Client — Applications */}
-        {session?.user?.role === 'client' && (
+        {/* Client / Admin — Applications */}
+        {canManageApplications(session?.user?.role) && (
           <div className="p-6 rounded-2xl" style={glass}>
             <div className="flex items-center gap-2.5 mb-5">
               <div className="w-7 h-7 rounded-lg flex items-center justify-center"
@@ -281,8 +286,9 @@ export default function JobDetails() {
                     <div className="flex justify-between items-start mb-3">
                       <div>
                         <Link href={`/profile/${app.applicant?._id}`}
-                          className="font-semibold text-white hover:text-green-400 transition text-sm">
+                          className="font-semibold text-white hover:text-green-400 transition text-sm inline-flex items-center gap-1.5">
                           {app.applicant?.name}
+                          {app.applicant?.verificationStatus === 'verified' && <VerifiedBadge size={14} />}
                         </Link>
                         {app.applicant?.phone && (
                           <p className="text-xs text-green-400 mt-0.5">{app.applicant.phone}</p>
