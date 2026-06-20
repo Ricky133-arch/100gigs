@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { MapPin, Phone, Briefcase, Star, ArrowLeft } from 'lucide-react';
+import VerifiedBadge from '@/components/VerifiedBadge';
 
 const glass = {
   background: 'rgba(255,255,255,0.04)',
@@ -109,7 +110,10 @@ export default function PublicProfile() {
 
             {/* Info */}
             <div className="flex-1 min-w-0">
-              <h1 className="text-xl font-bold text-white truncate">{user.name}</h1>
+              <h1 className="text-xl font-bold text-white truncate inline-flex items-center gap-2">
+                {user.name}
+                {user.verificationStatus === 'verified' && <VerifiedBadge size={18} />}
+              </h1>
               <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full capitalize inline-block mt-1"
                 style={{ background: 'rgba(74,222,128,0.12)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.2)' }}>
                 {user.role}

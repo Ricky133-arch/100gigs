@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { User, MapPin, Phone, Briefcase, Save, Loader2, CheckCircle, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
+import VerifiedBadge from '@/components/VerifiedBadge';
 
 const SKILLS = [
   'Plumbing', 'Electrical', 'Carpentry', 'Makeup & Hair',
@@ -53,6 +54,7 @@ export default function ProfilePage() {
   const router = useRouter();
   const [profile, setProfile] = useState({
     name: '', email: '', phone: '', bio: '', location: '', skills: [],
+    verificationStatus: 'unsubmitted',
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -80,6 +82,7 @@ export default function ProfilePage() {
         name: data.name || '', email: data.email || '',
         phone: data.phone || '', bio: data.bio || '',
         location: data.location || '', skills: data.skills || [],
+        verificationStatus: data.verificationStatus || 'unsubmitted',
       });
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
@@ -177,12 +180,23 @@ export default function ProfilePage() {
               style={{ border: '2px solid #080f0a' }} />
           </div>
           <div className="min-w-0">
-            <p className="text-lg font-bold text-white truncate">{session?.user?.name}</p>
+            <p className="text-lg font-bold text-white truncate inline-flex items-center gap-1.5">
+              {session?.user?.name}
+              {profile.verificationStatus === 'verified' && <VerifiedBadge size={16} />}
+            </p>
             <p className="text-white/40 text-sm truncate">{session?.user?.email}</p>
-            <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full mt-1.5 inline-block capitalize"
-              style={{ background: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.25)' }}>
-              {session?.user?.role}
-            </span>
+            <div className="flex items-center gap-2 mt-1.5">
+              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full inline-block capitalize"
+                style={{ background: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.25)' }}>
+                {session?.user?.role}
+              </span>
+              {session?.user?.role === 'provider' && profile.verificationStatus !== 'verified' && (
+                <a href="/verification" className="text-xs font-semibold px-2.5 py-0.5 rounded-full inline-block transition hover:brightness-110"
+                  style={{ background: 'rgba(250,204,21,0.12)', color: '#facc15', border: '1px solid rgba(250,204,21,0.25)' }}>
+                  {profile.verificationStatus === 'pending' ? 'Verification pending' : 'Get verified →'}
+                </a>
+              )}
+            </div>
           </div>
         </div>
 
