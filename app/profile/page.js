@@ -2,7 +2,7 @@
 import { useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { User, MapPin, Phone, Briefcase, Save, Loader2, CheckCircle, ArrowRight } from 'lucide-react';
+import { User, MapPin, Phone, Briefcase, Save, Loader2, CheckCircle, ArrowRight, Camera } from 'lucide-react';
 import { toast } from 'sonner';
 import VerifiedBadge from '@/components/VerifiedBadge';
 
@@ -50,14 +50,15 @@ const Section = ({ icon: Icon, title, children }) => (
 );
 
 export default function ProfilePage() {
-  const { data: session, status } = useSession();
+  const { data: session, status, update: updateSession } = useSession();
   const router = useRouter();
   const [profile, setProfile] = useState({
     name: '', email: '', phone: '', bio: '', location: '', skills: [],
-    verificationStatus: 'unsubmitted',
+    avatar: '', verificationStatus: 'unsubmitted',
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [visible, setVisible] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -82,6 +83,7 @@ export default function ProfilePage() {
         name: data.name || '', email: data.email || '',
         phone: data.phone || '', bio: data.bio || '',
         location: data.location || '', skills: data.skills || [],
+        avatar: data.avatar || '',
         verificationStatus: data.verificationStatus || 'unsubmitted',
       });
     } catch (err) { console.error(err); }
@@ -96,6 +98,47 @@ export default function ProfilePage() {
       ? prev.skills.filter(s => s !== skill)
       : [...prev.skills, skill],
   }));
+
+  // ── Profile photo upload ────────────────────────────────────────────
+  const handleAvatarChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('Image is too large (max 10MB)');
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please choose an image file');
+      return;
+    }
+
+    setUploadingAvatar(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      if (!res.ok) throw new Error('Upload failed');
+      const data = await res.json();
+
+      // Save the new avatar URL immediately so it's not lost if the user
+      // navigates away before clicking the main "Save Profile" button.
+      const saveRes = await fetch('/api/users/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...profile, avatar: data.url }),
+      });
+      if (!saveRes.ok) throw new Error('Failed to save photo');
+
+      setProfile(prev => ({ ...prev, avatar: data.url }));
+      toast.success('Profile photo updated!');
+    } catch {
+      toast.error('Failed to upload photo. Please try again.');
+    } finally {
+      setUploadingAvatar(false);
+      e.target.value = '';
+    }
+  };
 
   const handleSave = async e => {
     e.preventDefault();
@@ -171,14 +214,34 @@ export default function ProfilePage() {
         {/* Avatar card */}
         <div className={`flex items-center gap-5 p-5 rounded-2xl mb-6 opacity-0 ${visible ? 'fade-up d1' : ''}`}
           style={{ background: 'linear-gradient(135deg, rgba(22,163,74,0.15) 0%, rgba(5,150,105,0.1) 100%)', border: '1px solid rgba(74,222,128,0.2)' }}>
-          <div className="relative shrink-0">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-white text-2xl font-bold"
+
+          {/* ── Photo with upload overlay ── */}
+          <label className="relative shrink-0 cursor-pointer group">
+            <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-white text-2xl font-bold overflow-hidden"
               style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 20px rgba(22,163,74,0.3)' }}>
-              {session?.user?.name?.charAt(0).toUpperCase()}
+              {profile.avatar ? (
+                <img src={profile.avatar} alt={profile.name} className="w-full h-full object-cover" />
+              ) : (
+                session?.user?.name?.charAt(0).toUpperCase()
+              )}
             </div>
+
+            {/* Hover overlay with camera icon */}
+            <div className="absolute inset-0 rounded-2xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
+              style={{ background: 'rgba(0,0,0,0.5)' }}>
+              {uploadingAvatar
+                ? <Loader2 size={18} className="text-white animate-spin" />
+                : <Camera size={18} className="text-white" />
+              }
+            </div>
+
             <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-400 rounded-full"
               style={{ border: '2px solid #080f0a' }} />
-          </div>
+
+            <input type="file" accept="image/*" className="hidden"
+              onChange={handleAvatarChange} disabled={uploadingAvatar} />
+          </label>
+
           <div className="min-w-0">
             <p className="text-lg font-bold text-white truncate inline-flex items-center gap-1.5">
               {session?.user?.name}

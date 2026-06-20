@@ -32,13 +32,19 @@ export async function PATCH(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { name, phone, bio, location, skills } = await request.json();
+    // ── 'avatar' added so the uploaded photo URL gets saved ──────────
+    const { name, phone, bio, location, skills, avatar } = await request.json();
 
     await connectDB();
 
+    const updateData = { name, phone, bio, location, skills };
+    // Only touch avatar if one was actually provided, so saving the rest
+    // of the form never accidentally wipes an existing photo
+    if (avatar !== undefined) updateData.avatar = avatar;
+
     const user = await User.findByIdAndUpdate(
       session.user.id,
-      { name, phone, bio, location, skills },
+      updateData,
       { new: true }
     ).select('-password');
 
