@@ -17,12 +17,16 @@ export async function GET(request) {
     await connectDB();
 
     const { searchParams } = new URL(request.url);
-    const role = searchParams.get('role');
+    const role               = searchParams.get('role');
     const verificationStatus = searchParams.get('verificationStatus');
+    const isSuspended        = searchParams.get('isSuspended');
 
-    const query = {};
-    if (role) query.role = role;
+    // Never return admin accounts in the list
+    const query = { role: { $ne: 'admin' } };
+
+    if (role)               query.role               = role;
     if (verificationStatus) query.verificationStatus = verificationStatus;
+    if (isSuspended === 'true') query.isSuspended    = true;
 
     const users = await User.find(query)
       .select('-password')
