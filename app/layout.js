@@ -14,7 +14,6 @@ export const metadata = {
   title: '100Gigs - Port Harcourt Gig Marketplace',
   description: 'Find skilled service providers or get hired in Port Harcourt, Nigeria',
   manifest: '/manifest.json',
-  themeColor: '#16a34a',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
@@ -23,6 +22,11 @@ export const metadata = {
   icons: {
     apple: '/icons/icon-192x192.png',
   },
+};
+
+// themeColor now lives here, as required by current Next.js versions
+export const viewport = {
+  themeColor: '#16a34a',
 };
 
 export default function RootLayout({ children }) {
