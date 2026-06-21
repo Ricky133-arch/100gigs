@@ -18,8 +18,11 @@ function ChatContent() {
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeChat, setActiveChat] = useState(null);
+  const [replyTo, setReplyTo] = useState(null);
   const messagesEndRef = useRef(null);
   const pollRef = useRef(null);
+  const longPressTimer = useRef(null);
+  const inputRef = useRef(null);
 
   const getConversationId = (id1, id2) => [id1, id2].sort().join('_');
   const conversationId = activeChat
@@ -50,15 +53,18 @@ function ChatContent() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-const fetchConversations = async () => {
-  try {
-    const res = await fetch('/api/chat');
-    if (!res.ok) return;
-    const data = await res.json();
-    setConversations(Array.isArray(data) ? data : (data.conversations || []));
-  } catch (err) { console.error(err); }
-  finally { setLoading(false); }
-};
+  // Clear reply when switching conversations
+  useEffect(() => { setReplyTo(null); }, [activeChat]);
+
+  const fetchConversations = async () => {
+    try {
+      const res = await fetch('/api/chat');
+      if (!res.ok) return;
+      const data = await res.json();
+      setConversations(Array.isArray(data) ? data : (data.conversations || []));
+    } catch (err) { console.error(err); }
+    finally { setLoading(false); }
+  };
 
   const fetchMessages = async () => {
     if (!conversationId) return;
@@ -70,22 +76,83 @@ const fetchConversations = async () => {
     } catch (err) { console.error(err); }
   };
 
+  // Long press handlers
+  const handleLongPressStart = (msg) => {
+    longPressTimer.current = setTimeout(() => {
+      setReplyTo(msg);
+      inputRef.current?.focus();
+    }, 500);
+  };
+
+  const handleLongPressEnd = () => {
+    clearTimeout(longPressTimer.current);
+  };
+
+  const cancelReply = () => setReplyTo(null);
+
   const sendMessage = async (e) => {
     e.preventDefault();
-    if (!newMessage.trim() || !activeChat) return;
+    const content = newMessage.trim();
+    if (!content || !activeChat) return;
+
+    // Snapshot the reply being sent before clearing state
+    const replySnapshot = replyTo ? {
+      _id: replyTo._id,
+      content: replyTo.content,
+      senderName: replyTo.sender?.name || (replyTo.sender?._id === session?.user?.id ? 'You' : activeChat.otherName),
+    } : null;
+
+    // ── Optimistic UI: show the message immediately, before the server responds ──
+    const tempId = `temp-${Date.now()}`;
+    const optimisticMsg = {
+      _id: tempId,
+      conversationId,
+      sender: { _id: session.user.id, name: session.user.name },
+      receiver: activeChat.otherId,
+      content,
+      createdAt: new Date().toISOString(),
+      replyTo: replySnapshot,
+      seen: false,
+      _optimistic: true,
+    };
+
+    setMessages(prev => [...prev, optimisticMsg]);
+    setNewMessage('');
+    setReplyTo(null);
     setSending(true);
+
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ receiverId: activeChat.otherId, content: newMessage.trim(), conversationId }),
+        body: JSON.stringify({
+          receiverId: activeChat.otherId,
+          content,
+          conversationId,
+          replyTo: replySnapshot,
+        }),
       });
-      if (!res.ok) { toast.error('Failed to send message'); return; }
-      setNewMessage('');
-      await fetchMessages();
-      await fetchConversations();
-    } catch { toast.error('Something went wrong'); }
-    finally { setSending(false); }
+
+      if (!res.ok) {
+        toast.error('Failed to send message');
+        // Roll back the optimistic message on failure
+        setMessages(prev => prev.filter(m => m._id !== tempId));
+        return;
+      }
+
+      const saved = await res.json();
+
+      // Swap the optimistic message for the real saved one
+      setMessages(prev => prev.map(m => m._id === tempId ? saved : m));
+
+      // Refresh conversations list in the background — don't block the UI on it
+      fetchConversations();
+    } catch {
+      toast.error('Something went wrong');
+      setMessages(prev => prev.filter(m => m._id !== tempId));
+    } finally {
+      setSending(false);
+    }
   };
 
   const openConversation = (conv) => {
@@ -164,7 +231,6 @@ const fetchConversations = async () => {
             </div>
 
             <div className="flex-1 overflow-y-auto">
-              {/* Active new chat from URL params */}
               {activeChat && !conversations.find(c => {
                 const other = c.sender?._id === session?.user?.id ? c.receiver : c.sender;
                 return other?._id === activeChat.otherId;
@@ -213,12 +279,7 @@ const fetchConversations = async () => {
                       className="w-full px-4 py-3.5 flex items-center gap-3 text-left border-b transition-all relative"
                       style={{
                         borderColor: 'rgba(255,255,255,0.05)',
-                        background: isActive
-                          ? 'rgba(74,222,128,0.08)'
-                          : hasUnread
-                          ? 'rgba(74,222,128,0.07)'
-                          : 'transparent',
-                        // Green left border accent for unread
+                        background: isActive ? 'rgba(74,222,128,0.08)' : hasUnread ? 'rgba(74,222,128,0.07)' : 'transparent',
                         borderLeft: hasUnread ? '3px solid #16a34a' : '3px solid transparent',
                       }}
                       onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = hasUnread ? 'rgba(74,222,128,0.11)' : 'rgba(255,255,255,0.03)'; }}
@@ -231,15 +292,10 @@ const fetchConversations = async () => {
                         <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 bg-green-400"
                           style={{ borderColor: 'rgba(8,15,10,1)' }} />
                       </div>
-
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between mb-0.5">
-                          {/* Name: green + bold when unread */}
                           <p className="text-sm truncate"
-                            style={{
-                              color: hasUnread ? '#4ade80' : 'rgba(255,255,255,0.85)',
-                              fontWeight: hasUnread ? '700' : '500',
-                            }}>
+                            style={{ color: hasUnread ? '#4ade80' : 'rgba(255,255,255,0.85)', fontWeight: hasUnread ? '700' : '500' }}>
                             {other.name}
                           </p>
                           <p className="text-[11px] shrink-0 ml-2"
@@ -248,15 +304,10 @@ const fetchConversations = async () => {
                           </p>
                         </div>
                         <div className="flex items-center justify-between gap-2">
-                          {/* Message preview: brighter + bold when unread */}
                           <p className="text-xs truncate"
-                            style={{
-                              color: hasUnread ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.3)',
-                              fontWeight: hasUnread ? '600' : '400',
-                            }}>
+                            style={{ color: hasUnread ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.3)', fontWeight: hasUnread ? '600' : '400' }}>
                             {conv.content}
                           </p>
-                          {/* Unread count badge */}
                           {hasUnread && (
                             <span className="shrink-0 min-w-[18px] h-[18px] rounded-full flex items-center justify-center text-[10px] font-bold text-white px-1"
                               style={{ background: '#16a34a', boxShadow: '0 0 0 2px rgba(8,15,10,0.8)' }}>
@@ -313,24 +364,51 @@ const fetchConversations = async () => {
                   ) : (
                     messages.map(msg => {
                       const isMe = msg.sender?._id === session?.user?.id || msg.sender === session?.user?.id;
+                      const isSelected = replyTo?._id === msg._id;
                       return (
-                        <div key={msg._id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                        <div key={msg._id}
+                          className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}
+                          onMouseDown={() => handleLongPressStart(msg)}
+                          onMouseUp={handleLongPressEnd}
+                          onMouseLeave={handleLongPressEnd}
+                          onTouchStart={() => handleLongPressStart(msg)}
+                          onTouchEnd={handleLongPressEnd}
+                          onTouchCancel={handleLongPressEnd}
+                        >
                           <div
-                            className="max-w-[70%] px-4 py-2.5 rounded-2xl text-sm"
-                            style={isMe ? {
-                              background: 'linear-gradient(135deg, #16a34a, #15803d)',
-                              borderBottomRightRadius: '4px',
-                              boxShadow: '0 2px 12px rgba(22,163,74,0.25)',
-                            } : {
-                              background: 'rgba(255,255,255,0.07)',
-                              border: '1px solid rgba(255,255,255,0.08)',
-                              borderBottomLeftRadius: '4px',
+                            className="max-w-[70%] rounded-2xl text-sm overflow-hidden transition-all duration-150 select-none"
+                            style={{
+                              opacity: msg._optimistic ? 0.7 : 1,
+                              ...(isMe ? {
+                                background: 'linear-gradient(135deg, #16a34a, #15803d)',
+                                borderBottomRightRadius: '4px',
+                                boxShadow: isSelected
+                                  ? '0 0 0 2px #4ade80, 0 2px 12px rgba(22,163,74,0.25)'
+                                  : '0 2px 12px rgba(22,163,74,0.25)',
+                              } : {
+                                background: 'rgba(255,255,255,0.07)',
+                                border: isSelected
+                                  ? '1px solid rgba(74,222,128,0.6)'
+                                  : '1px solid rgba(255,255,255,0.08)',
+                                borderBottomLeftRadius: '4px',
+                              }),
+                              transform: isSelected ? 'scale(0.97)' : 'scale(1)',
                             }}
                           >
-                            <p className="text-white leading-relaxed">{msg.content}</p>
-                            <p className="text-[11px] mt-1" style={{ color: isMe ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.25)' }}>
-                              {formatDistanceToNow(new Date(msg.createdAt), { addSuffix: true })}
-                            </p>
+                            {/* Quoted reply inside bubble */}
+                            {msg.replyTo && (
+                              <div className="px-3 pt-2.5 pb-1.5 mx-2 mt-2 rounded-xl"
+                                style={{ background: 'rgba(0,0,0,0.2)', borderLeft: '2px solid rgba(74,222,128,0.7)' }}>
+                                <p className="text-[11px] font-semibold text-green-400 mb-0.5">{msg.replyTo.senderName}</p>
+                                <p className="text-[11px] text-white/50 truncate">{msg.replyTo.content}</p>
+                              </div>
+                            )}
+                            <div className="px-4 py-2.5">
+                              <p className="text-white leading-relaxed">{msg.content}</p>
+                              <p className="text-[11px] mt-1" style={{ color: isMe ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.25)' }}>
+                                {msg._optimistic ? 'Sending...' : formatDistanceToNow(new Date(msg.createdAt), { addSuffix: true })}
+                              </p>
+                            </div>
                           </div>
                         </div>
                       );
@@ -339,34 +417,50 @@ const fetchConversations = async () => {
                   <div ref={messagesEndRef} />
                 </div>
 
-                {/* Input */}
-                <form onSubmit={sendMessage} className="px-4 py-3.5 flex gap-3 border-t"
-                  style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
-                  <input
-                    type="text"
-                    value={newMessage}
-                    onChange={e => setNewMessage(e.target.value)}
-                    placeholder={`Message ${activeChat.otherName}...`}
-                    disabled={sending}
-                    className="flex-1 px-4 py-3 rounded-xl text-sm text-white placeholder-white/20 outline-none transition"
-                    style={{
-                      background: 'rgba(255,255,255,0.06)',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                    }}
-                    onFocus={e => e.target.style.borderColor = 'rgba(74,222,128,0.4)'}
-                    onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.08)'}
-                  />
-                  <button type="submit" disabled={sending || !newMessage.trim()}
-                    className="w-11 h-11 rounded-xl flex items-center justify-center text-white transition-all active:scale-95 disabled:opacity-40 shrink-0"
-                    style={{
-                      background: newMessage.trim()
-                        ? 'linear-gradient(135deg,#16a34a,#15803d)'
-                        : 'rgba(255,255,255,0.06)',
-                      boxShadow: newMessage.trim() ? '0 4px 16px rgba(22,163,74,0.3)' : 'none',
-                    }}>
-                    <Send size={16} />
-                  </button>
-                </form>
+                {/* Input area */}
+                <div className="border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                  {/* Reply preview bar */}
+                  {replyTo && (
+                    <div className="px-4 pt-3 flex items-center gap-3">
+                      <div className="flex-1 px-3 py-2 rounded-xl"
+                        style={{ background: 'rgba(74,222,128,0.08)', borderLeft: '2px solid #4ade80' }}>
+                        <p className="text-[11px] font-semibold text-green-400 mb-0.5">
+                          Replying to {replyTo.sender?.name || (replyTo.sender?._id === session?.user?.id ? 'yourself' : activeChat.otherName)}
+                        </p>
+                        <p className="text-[11px] text-white/40 truncate">{replyTo.content}</p>
+                      </div>
+                      <button onClick={cancelReply}
+                        className="w-6 h-6 rounded-full flex items-center justify-center text-white/30 hover:text-white/70 transition shrink-0 text-xs"
+                        style={{ background: 'rgba(255,255,255,0.06)' }}>
+                        ✕
+                      </button>
+                    </div>
+                  )}
+                  <form onSubmit={sendMessage} className="px-4 py-3.5 flex gap-3">
+                    <input
+                      ref={inputRef}
+                      type="text"
+                      value={newMessage}
+                      onChange={e => setNewMessage(e.target.value)}
+                      placeholder={replyTo ? `Reply to ${replyTo.sender?.name || 'message'}...` : `Message ${activeChat.otherName}...`}
+                      className="flex-1 px-4 py-3 rounded-xl text-sm text-white placeholder-white/20 outline-none transition"
+                      style={{
+                        background: 'rgba(255,255,255,0.06)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                      }}
+                      onFocus={e => e.target.style.borderColor = 'rgba(74,222,128,0.4)'}
+                      onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.08)'}
+                    />
+                    <button type="submit" disabled={!newMessage.trim()}
+                      className="w-11 h-11 rounded-xl flex items-center justify-center text-white transition-all active:scale-95 disabled:opacity-40 shrink-0"
+                      style={{
+                        background: newMessage.trim() ? 'linear-gradient(135deg,#16a34a,#15803d)' : 'rgba(255,255,255,0.06)',
+                        boxShadow: newMessage.trim() ? '0 4px 16px rgba(22,163,74,0.3)' : 'none',
+                      }}>
+                      <Send size={16} />
+                    </button>
+                  </form>
+                </div>
               </>
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-center px-8">

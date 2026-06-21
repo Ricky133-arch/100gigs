@@ -78,7 +78,7 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { receiverId, content, conversationId } = await request.json();
+    const { receiverId, content, conversationId, replyTo } = await request.json();
 
     if (!receiverId || !content) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -91,6 +91,7 @@ export async function POST(request) {
       sender: session.user.id,
       receiver: receiverId,
       content,
+      replyTo: replyTo || null,
     });
 
     const populated = await Message.findById(message._id)
