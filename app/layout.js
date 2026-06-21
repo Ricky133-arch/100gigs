@@ -2,9 +2,11 @@ import { Inter } from 'next/font/google';
 import Providers from '@/components/providers';
 import ThemeProvider from '@/components/ThemeProvider';
 import Navbar from '@/components/Navbar';
+import AppEntry from '@/components/AppEntry';
+import ServiceWorkerRegister from '@/components/ServiceWorkerRegister';
 import { Toaster } from 'sonner';
 import './globals.css';
- 
+
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata = {
@@ -22,15 +24,17 @@ export const metadata = {
   },
 };
 
- 
 export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.className} bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100`}>
         <Providers>
           <ThemeProvider>
-            <main>{children}</main>
-            <Navbar />
+            <AppEntry>
+              <ServiceWorkerRegister />
+              <main>{children}</main>
+              <Navbar />
+            </AppEntry>
             <Toaster position="top-center" richColors />
           </ThemeProvider>
         </Providers>
@@ -38,4 +42,3 @@ export default function RootLayout({ children }) {
     </html>
   );
 }
- 
