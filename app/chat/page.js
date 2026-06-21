@@ -37,7 +37,7 @@ function ChatContent() {
     if (!session) return;
     const to = searchParams.get('to');
     const name = searchParams.get('name');
-    if (to && name) setActiveChat({ otherId: to, otherName: decodeURIComponent(name) });
+    if (to && name) setActiveChat({ otherId: to, otherName: decodeURIComponent(name), otherAvatar: null });
     fetchConversations();
   }, [session]);
 
@@ -49,9 +49,38 @@ function ChatContent() {
     return () => clearInterval(pollRef.current);
   }, [conversationId]);
 
+  // Track the message container + whether the user is near the bottom
+  const messagesContainerRef = useRef(null);
+  const prevMessageCountRef = useRef(0);
+  const isNearBottomRef = useRef(true);
+
+  const checkIfNearBottom = () => {
+    const el = messagesContainerRef.current;
+    if (!el) return true;
+    const threshold = 120; // px from bottom counts as "at the bottom"
+    return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+  };
+
+  const handleMessagesScroll = () => {
+    isNearBottomRef.current = checkIfNearBottom();
+  };
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const isNewMessage = messages.length > prevMessageCountRef.current;
+    prevMessageCountRef.current = messages.length;
+
+    // Only auto-scroll if a message was actually added AND the user
+    // was already near the bottom (i.e. not reading older history).
+    if (isNewMessage && isNearBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
+
+  // Reset bottom-tracking whenever the active conversation changes
+  useEffect(() => {
+    isNearBottomRef.current = true;
+    prevMessageCountRef.current = 0;
+  }, [conversationId]);
 
   // Clear reply when switching conversations
   useEffect(() => { setReplyTo(null); }, [activeChat]);
@@ -90,6 +119,17 @@ function ChatContent() {
 
   const cancelReply = () => setReplyTo(null);
 
+  // ── Jump to the original message when tapping a quoted reply ───────
+  const [highlightedId, setHighlightedId] = useState(null);
+  const jumpToMessage = (id) => {
+    if (!id) return;
+    const el = document.getElementById(`msg-${id}`);
+    if (!el) return; // original message not in the currently loaded list
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightedId(id);
+    setTimeout(() => setHighlightedId(null), 1200);
+  };
+
   const sendMessage = async (e) => {
     e.preventDefault();
     const content = newMessage.trim();
@@ -120,6 +160,8 @@ function ChatContent() {
     setNewMessage('');
     setReplyTo(null);
     setSending(true);
+    // Sending your own message should always snap you to the bottom
+    isNearBottomRef.current = true;
 
     try {
       const res = await fetch('/api/chat', {
@@ -158,7 +200,7 @@ function ChatContent() {
   const openConversation = (conv) => {
     const other = conv.sender?._id === session?.user?.id ? conv.receiver : conv.sender;
     if (!other) return;
-    setActiveChat({ otherId: other._id, otherName: other.name });
+    setActiveChat({ otherId: other._id, otherName: other.name, otherAvatar: other.avatar });
   };
 
   if (status === 'loading') {
@@ -286,8 +328,12 @@ function ChatContent() {
                       onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = hasUnread ? 'rgba(74,222,128,0.07)' : 'transparent'; }}
                     >
                       <div className="relative shrink-0">
-                        <div className="w-9 h-9 rounded-full bg-green-500 flex items-center justify-center text-white text-sm font-bold">
-                          {other.name?.charAt(0).toUpperCase()}
+                        <div className="w-9 h-9 rounded-full bg-green-500 flex items-center justify-center text-white text-sm font-bold overflow-hidden">
+                          {other.avatar ? (
+                            <img src={other.avatar} alt={other.name} className="w-full h-full object-cover" />
+                          ) : (
+                            other.name?.charAt(0).toUpperCase()
+                          )}
                         </div>
                         <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 bg-green-400"
                           style={{ borderColor: 'rgba(8,15,10,1)' }} />
@@ -339,8 +385,12 @@ function ChatContent() {
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                     <ArrowLeft size={16} />
                   </button>
-                  <div className="w-9 h-9 rounded-full bg-green-500 flex items-center justify-center text-white font-bold text-sm">
-                    {activeChat.otherName?.charAt(0).toUpperCase()}
+                  <div className="w-9 h-9 rounded-full bg-green-500 flex items-center justify-center text-white font-bold text-sm overflow-hidden">
+                    {activeChat.otherAvatar ? (
+                      <img src={activeChat.otherAvatar} alt={activeChat.otherName} className="w-full h-full object-cover" />
+                    ) : (
+                      activeChat.otherName?.charAt(0).toUpperCase()
+                    )}
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-white">{activeChat.otherName}</p>
@@ -352,7 +402,11 @@ function ChatContent() {
                 </div>
 
                 {/* Messages */}
-                <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+                <div
+                  ref={messagesContainerRef}
+                  onScroll={handleMessagesScroll}
+                  className="flex-1 overflow-y-auto px-4 py-4 space-y-3"
+                >
                   {messages.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-center">
                       <div className="w-12 h-12 rounded-2xl flex items-center justify-center mb-3"
@@ -367,6 +421,7 @@ function ChatContent() {
                       const isSelected = replyTo?._id === msg._id;
                       return (
                         <div key={msg._id}
+                          id={`msg-${msg._id}`}
                           className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}
                           onMouseDown={() => handleLongPressStart(msg)}
                           onMouseUp={handleLongPressEnd}
@@ -384,20 +439,26 @@ function ChatContent() {
                                 borderBottomRightRadius: '4px',
                                 boxShadow: isSelected
                                   ? '0 0 0 2px #4ade80, 0 2px 12px rgba(22,163,74,0.25)'
+                                  : highlightedId === msg._id
+                                  ? '0 0 0 2px #fbbf24, 0 2px 12px rgba(22,163,74,0.25)'
                                   : '0 2px 12px rgba(22,163,74,0.25)',
                               } : {
-                                background: 'rgba(255,255,255,0.07)',
+                                background: highlightedId === msg._id ? 'rgba(251,191,36,0.15)' : 'rgba(255,255,255,0.07)',
                                 border: isSelected
                                   ? '1px solid rgba(74,222,128,0.6)'
+                                  : highlightedId === msg._id
+                                  ? '1px solid rgba(251,191,36,0.6)'
                                   : '1px solid rgba(255,255,255,0.08)',
                                 borderBottomLeftRadius: '4px',
                               }),
                               transform: isSelected ? 'scale(0.97)' : 'scale(1)',
                             }}
                           >
-                            {/* Quoted reply inside bubble */}
+                            {/* Quoted reply inside bubble — tap to jump to original */}
                             {msg.replyTo && (
-                              <div className="px-3 pt-2.5 pb-1.5 mx-2 mt-2 rounded-xl"
+                              <div
+                                onClick={(e) => { e.stopPropagation(); jumpToMessage(msg.replyTo._id); }}
+                                className="px-3 pt-2.5 pb-1.5 mx-2 mt-2 rounded-xl cursor-pointer transition hover:brightness-125"
                                 style={{ background: 'rgba(0,0,0,0.2)', borderLeft: '2px solid rgba(74,222,128,0.7)' }}>
                                 <p className="text-[11px] font-semibold text-green-400 mb-0.5">{msg.replyTo.senderName}</p>
                                 <p className="text-[11px] text-white/50 truncate">{msg.replyTo.content}</p>
