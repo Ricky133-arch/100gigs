@@ -4,6 +4,7 @@ import ThemeProvider from '@/components/ThemeProvider';
 import Navbar from '@/components/Navbar';
 import AppEntry from '@/components/AppEntry';
 import ServiceWorkerRegister from '@/components/ServiceWorkerRegister';
+import InstallBanner from '@/components/InstallBanner';
 import { Toaster } from 'sonner';
 import './globals.css';
 
@@ -32,6 +33,7 @@ export default function RootLayout({ children }) {
           <ThemeProvider>
             <AppEntry>
               <ServiceWorkerRegister />
+              <InstallBanner />
               <main>{children}</main>
               <Navbar />
             </AppEntry>
