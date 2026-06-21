@@ -26,7 +26,7 @@ export const metadata = {
 
 // themeColor now lives here, as required by current Next.js versions
 export const viewport = {
-  themeColor: '#16a34a',
+  themeColor: '#000000'
 };
 
 export default function RootLayout({ children }) {
