@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import connectDB from '@/lib/mongodb';
 import Job from '@/models/Job';
+import User from '@/models/User';
+import PushSubscription from '@/models/PushSubscription';
+import { sendNotificationToUser } from '@/lib/sendNotification';
 import { authOptions } from '../auth/[...nextauth]/route';
 
 export async function GET(request) {
@@ -76,12 +79,12 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-   if (session.user.role !== "client" && session.user.role !== "admin") {
-  return NextResponse.json(
-    { error: "Only clients and admins can post jobs" },
-    { status: 403 }
-  );
-}
+    if (session.user.role !== 'client' && session.user.role !== 'admin') {
+      return NextResponse.json(
+        { error: 'Only clients and admins can post jobs' },
+        { status: 403 }
+      );
+    }
 
     const body = await request.json();
     const { title, description, category, budgetMin, budgetMax, location, deadline, images } = body;
@@ -100,14 +103,48 @@ export async function POST(request) {
       budgetMax,
       location,
       deadline: deadline || null,
-      images: images || [],
+      images:   images   || [],
       postedBy: session.user.id,
-      status: 'open',
+      status:   'open',
     });
+
+    // ── Notify all subscribed providers about the new job ──────────────────
+    // Fire-and-forget — response is not delayed
+    notifyProviders(job, session.user.name).catch(err =>
+      console.error('[jobs/POST] Push notify failed:', err)
+    );
 
     return NextResponse.json(job, { status: 201 });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: 'Failed to create job' }, { status: 500 });
   }
+}
+
+// ── Helper: push new job notification to all subscribed providers ────────────
+async function notifyProviders(job, clientName) {
+  // Find every user who has a push subscription
+  const subs = await PushSubscription.find({}).select('user').lean();
+  if (!subs.length) return;
+
+  const subscribedUserIds = subs.map(s => s.user.toString());
+
+  // Keep only providers
+  const providers = await User.find({
+    _id:  { $in: subscribedUserIds },
+    role: 'provider',
+  }).select('_id').lean();
+
+  if (!providers.length) return;
+
+  const budget  = `₦${Number(job.budgetMin).toLocaleString()} – ₦${Number(job.budgetMax).toLocaleString()}`;
+  const payload = {
+    title: `New ${job.category} job in ${job.location}`,
+    body:  `${job.title} · ${budget}`,
+    url:   `/jobs/${job._id}`,
+  };
+
+  await Promise.allSettled(
+    providers.map(p => sendPush(p._id.toString(), payload))
+  );
 }
