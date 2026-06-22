@@ -1,34 +1,48 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { MapPin, Phone, Briefcase, Star, ArrowLeft } from 'lucide-react';
+import { MapPin, Phone, Briefcase, Star, ArrowLeft, Link2, Copy, Check, ExternalLink } from 'lucide-react';
 import VerifiedBadge from '@/components/VerifiedBadge';
+import { toast } from 'sonner';
 
 const glass = {
-  background: 'rgba(255,255,255,0.04)',
-  border: '1px solid rgba(255,255,255,0.08)',
-  backdropFilter: 'blur(12px)',
-  WebkitBackdropFilter: 'blur(12px)',
+  background:          'rgba(255,255,255,0.04)',
+  border:              '1px solid rgba(255,255,255,0.08)',
+  backdropFilter:      'blur(12px)',
+  WebkitBackdropFilter:'blur(12px)',
 };
+
+const SOCIAL_PLATFORMS = [
+ 
+  { key: 'instagram', label: 'Instagram',  icon: '📸', buildUrl: (v) => `https://instagram.com/${v.replace('@', '')}`,                        color: '#e1306c' },
+  { key: 'facebook',  label: 'Facebook',   icon: '👥', buildUrl: (v) => v.startsWith('http') ? v : `https://facebook.com/${v}`,               color: '#1877f2' },
+  { key: 'twitter',   label: 'X',          icon: '𝕏',  buildUrl: (v) => `https://x.com/${v.replace('@', '')}`,                               color: '#ffffff' },
+  { key: 'tiktok',    label: 'TikTok',     icon: '🎵', buildUrl: (v) => `https://tiktok.com/@${v.replace('@', '')}`,                         color: '#ff0050' },
+  { key: 'linkedin',  label: 'LinkedIn',   icon: '💼', buildUrl: (v) => v.startsWith('http') ? v : `https://linkedin.com/in/${v}`,            color: '#0a66c2' },
+  { key: 'youtube',   label: 'YouTube',    icon: '▶️', buildUrl: (v) => v.startsWith('http') ? v : `https://youtube.com/@${v.replace('@', '')}`, color: '#ff0000' },
+];
 
 function StarDisplay({ rating, size = 16 }) {
   return (
     <div className="flex gap-0.5">
       {[1,2,3,4,5].map(star => (
         <Star key={star} size={size}
-          style={{ color: star <= Math.round(rating) ? '#fbbf24' : 'rgba(255,255,255,0.1)',
-                   fill: star <= Math.round(rating) ? '#fbbf24' : 'transparent' }} />
+          style={{
+            color: star <= Math.round(rating) ? '#fbbf24' : 'rgba(255,255,255,0.1)',
+            fill:  star <= Math.round(rating) ? '#fbbf24' : 'transparent',
+          }} />
       ))}
     </div>
   );
 }
 
 export default function PublicProfile() {
-  const { id } = useParams();
-  const router = useRouter();
-  const [user, setUser] = useState(null);
-  const [ratingsData, setRatingsData] = useState({ ratings: [], average: 0, total: 0 });
-  const [loading, setLoading] = useState(true);
+  const { id }   = useParams();
+  const router   = useRouter();
+  const [user,         setUser]        = useState(null);
+  const [ratingsData,  setRatingsData] = useState({ ratings: [], average: 0, total: 0 });
+  const [loading,      setLoading]     = useState(true);
+  const [copied,       setCopied]      = useState(false);
 
   useEffect(() => { fetchProfile(); fetchRatings(); }, [id]);
 
@@ -37,16 +51,34 @@ export default function PublicProfile() {
       const res = await fetch(`/api/users/${id}`);
       if (!res.ok) throw new Error('Not found');
       setUser(await res.json());
-    } catch (err) { console.error(err); }
-    finally { setLoading(false); }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const fetchRatings = async () => {
     try {
       const res = await fetch(`/api/ratings/${id}`);
       if (res.ok) setRatingsData(await res.json());
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+    }
   };
+
+  const copyLink = async () => {
+    const link = window.location.href;
+    await navigator.clipboard.writeText(link);
+    setCopied(true);
+    toast.success('Profile link copied!');
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  // Collect only filled social links
+  const activeSocials = user
+    ? SOCIAL_PLATFORMS.filter(p => user.socialLinks?.[p.key]?.trim())
+    : [];
 
   if (loading) return (
     <div className="min-h-screen bg-[#080f0a] flex items-center justify-center">
@@ -100,13 +132,12 @@ export default function PublicProfile() {
           <div className="flex items-start gap-5">
             {/* Avatar */}
             <div className="relative shrink-0">
-              <div className="w-18 h-18 w-[72px] h-[72px] rounded-2xl flex items-center justify-center text-white text-2xl font-bold overflow-hidden"
+              <div className="w-[72px] h-[72px] rounded-2xl flex items-center justify-center text-white text-2xl font-bold overflow-hidden"
                 style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 20px rgba(22,163,74,0.3)' }}>
-                {user.avatar ? (
-                  <img src={user.avatar} alt={user.name} className="w-full h-full object-cover" />
-                ) : (
-                  user.name?.charAt(0).toUpperCase()
-                )}
+                {user.avatar
+                  ? <img src={user.avatar} alt={user.name} className="w-full h-full object-cover" />
+                  : user.name?.charAt(0).toUpperCase()
+                }
               </div>
               <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-400 rounded-full"
                 style={{ border: '2px solid #080f0a' }} />
@@ -123,7 +154,7 @@ export default function PublicProfile() {
                 {user.role}
               </span>
 
-              {/* Rating summary */}
+              {/* Rating */}
               {ratingsData.total > 0 && (
                 <div className="flex items-center gap-2 mt-3">
                   <StarDisplay rating={ratingsData.average} size={14} />
@@ -154,7 +185,56 @@ export default function PublicProfile() {
               <p className="text-white/60 text-sm leading-relaxed">{user.bio}</p>
             </div>
           )}
+
+          {/* Share this profile */}
+          <div className="mt-5 pt-5 flex items-center gap-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            <p className="text-xs text-white/25 flex-1">Share this profile</p>
+            <button onClick={copyLink}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+              style={{ background: copied ? 'rgba(74,222,128,0.2)' : 'rgba(255,255,255,0.06)', color: copied ? '#4ade80' : 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              {copied ? <><Check size={12} /> Copied!</> : <><Copy size={12} /> Copy Link</>}
+            </button>
+          </div>
         </div>
+
+        {/* ── Social Links ───────────────────────────────────────────────── */}
+        {activeSocials.length > 0 && (
+          <div className="p-6 rounded-2xl" style={glass}>
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center"
+                style={{ background: 'rgba(74,222,128,0.12)' }}>
+                <Link2 size={14} className="text-green-400" />
+              </div>
+              <p className="text-sm font-semibold text-white">Find Me Online</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {activeSocials.map(platform => {
+                const value = user.socialLinks[platform.key];
+                return (
+                  <a
+                    key={platform.key}
+                    href={platform.buildUrl(value)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition hover:brightness-110 active:scale-95"
+                    style={{
+                      background: `${platform.color}18`,
+                      border:     `1px solid ${platform.color}30`,
+                      color:      platform.color,
+                    }}
+                  >
+                    <span>{platform.icon}</span>
+                    {platform.label}
+                    <ExternalLink size={11} className="opacity-60" />
+                  </a>
+                );
+              })}
+            </div>
+            <p className="text-xs text-white/20 mt-4">
+              These links help you verify my work and reach me on your preferred platform.
+            </p>
+          </div>
+        )}
 
         {/* Skills */}
         {user.skills?.length > 0 && (
@@ -196,7 +276,6 @@ export default function PublicProfile() {
             </div>
           ) : (
             <div className="space-y-5">
-              {/* Average score */}
               <div className="flex items-center gap-5 p-5 rounded-2xl"
                 style={{ background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)' }}>
                 <div className="text-center shrink-0">
@@ -211,7 +290,6 @@ export default function PublicProfile() {
                 </div>
               </div>
 
-              {/* Individual reviews */}
               <div className="space-y-4">
                 {ratingsData.ratings.map(r => (
                   <div key={r._id} className="p-4 rounded-xl"
@@ -241,6 +319,19 @@ export default function PublicProfile() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* 100Gigs branding footer — helps with viral sharing */}
+        <div className="flex items-center justify-center gap-2 py-4">
+          <div className="w-6 h-6 rounded-lg flex items-center justify-center"
+            style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)' }}>
+            <span className="text-white font-black text-xs">G</span>
+          </div>
+          <span className="text-white/20 text-xs">
+            Find more verified service providers on{' '}
+            <a href="/" className="text-green-400/60 hover:text-green-400 transition">100Gigs</a>
+            {' '}— Port Harcourt's gig marketplace
+          </span>
         </div>
       </div>
     </div>

@@ -12,6 +12,28 @@ const UserSchema = new mongoose.Schema({
   avatar:   { type: String },
   portfolio:[{ type: String }],
 
+  // ── Shareable username ──────────────────────────────────────────────────
+  // e.g. 100gigs.com/u/chidi-plumber
+  username: {
+    type:      String,
+    unique:    true,
+    sparse:    true, // allows multiple null values
+    lowercase: true,
+    trim:      true,
+    match:     [/^[a-z0-9_-]{3,30}$/, 'Username can only contain letters, numbers, hyphens and underscores (3–30 chars)'],
+  },
+
+  // ── Social links ────────────────────────────────────────────────────────
+  socialLinks: {
+    
+    instagram: { type: String, default: '' }, // handle e.g. @chidi_plumber
+    facebook:  { type: String, default: '' }, // profile URL or handle
+    twitter:   { type: String, default: '' }, // handle e.g. @chidi
+    tiktok:    { type: String, default: '' }, // handle
+    linkedin:  { type: String, default: '' }, // profile URL or handle
+    youtube:   { type: String, default: '' }, // channel URL
+  },
+
   // ── Verification (providers only) ──────────────────────────────────────
   verificationStatus: {
     type:    String,
