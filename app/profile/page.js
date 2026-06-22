@@ -207,9 +207,11 @@ export default function ProfilePage() {
   }, [profile.username]);
 
   // ── Copy shareable link ──────────────────────────────────────────────────
-  const shareableLink = profile.username
-    ? `${window?.location?.origin}/u/${profile.username}`
-    : `${window?.location?.origin}/profile/${session?.user?.id}`;
+  const shareableLink = typeof window !== 'undefined'
+  ? profile.username
+    ? `${window.location.origin}/u/${profile.username}`
+    : `${window.location.origin}/profile/${session?.user?.id}`
+  : '';
 
   const copyLink = async () => {
     await navigator.clipboard.writeText(shareableLink);
