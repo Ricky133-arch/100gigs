@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useSession, signOut } from 'next-auth/react';
-import { Home, LayoutDashboard, PlusCircle, User, MessageCircle, LogOut, Settings, Bell, ShieldCheck } from 'lucide-react';
+import { Home, LayoutDashboard, PlusCircle, User, MessageCircle, LogOut, Settings, Bell, ShieldCheck, Megaphone } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import NotificationBell from './NotificationBell';
@@ -203,11 +203,16 @@ export default function Navbar() {
                       </Link>
                     )}
 
-                    {/* Admin dashboard — admins only */}
+                    {/* Admin dashboard + announcement composer — admins only */}
                     {session.user.role === 'admin' && (
-                      <Link href="/admin" className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/10 transition" style={{ color: 'var(--nav-text)' }}>
-                        <ShieldCheck size={15} className="text-green-400" /> Admin Dashboard
-                      </Link>
+                      <>
+                        <Link href="/admin" className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/10 transition" style={{ color: 'var(--nav-text)' }}>
+                          <ShieldCheck size={15} className="text-green-400" /> Admin Dashboard
+                        </Link>
+                        <Link href="/admin/announce" className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/10 transition" style={{ color: 'var(--nav-text)' }}>
+                          <Megaphone size={15} className="text-green-400" /> Send Announcement
+                        </Link>
+                      </>
                     )}
 
                     <div className="flex items-center gap-3 px-4 py-2.5 text-sm opacity-50 cursor-not-allowed" style={{ color: 'var(--nav-text)' }}>
@@ -254,7 +259,7 @@ export default function Navbar() {
       </nav>
 
       {/* Bottom spacer */}
-      <div className="h-24" />
+      <div className="h-24 bg-[#080f0a]" />
     </>
   );
 }
