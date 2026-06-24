@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import connectDB from '@/lib/mongodb';
 import Message from '@/models/Message';
 import { authOptions } from '../auth/[...nextauth]/route';
-import { sendNotificationToUser } from '@/lib/sendNotification';
+import { sendPushOnly } from '@/lib/sendNotification';
 
 export async function GET() {
   try {
@@ -97,14 +97,16 @@ export async function POST(request) {
     const populated = await Message.findById(message._id)
       .populate('sender', 'name avatar');
 
-    // ── Send push notification to receiver ────────────────────────────────
+    // ── Push-only: chat already has its own unread system (Message.seen)
+    // and its own badge in the Navbar, so we deliberately skip creating
+    // a Notification document here to avoid cluttering /notifications.
     try {
       const unreadCount = await Message.countDocuments({
         receiver: receiverId,
         seen: false,
       });
 
-      await sendNotificationToUser(receiverId, {
+      await sendPushOnly(receiverId, {
         title: `💬 ${session.user.name}`,
         body: content.length > 80 ? content.substring(0, 80) + '...' : content,
         url: `/chat?to=${session.user.id}&name=${encodeURIComponent(session.user.name)}`,

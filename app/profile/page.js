@@ -107,7 +107,8 @@ const Section = ({ icon: Icon, title, children }) => (
 );
 
 export default function ProfilePage() {
-  const { data: session, status } = useSession();
+  // ── 'update' pulled from useSession so we can push avatar changes live ──
+  const { data: session, status, update: updateSession } = useSession();
   const router = useRouter();
 
   const [profile, setProfile] = useState({
@@ -242,6 +243,12 @@ export default function ProfilePage() {
       });
 
       setProfile(prev => ({ ...prev, avatar: data.url }));
+
+      // ── Push the new avatar into the live session immediately ──────
+      // Without this, the Navbar avatar wouldn't update until next login,
+      // since NextAuth's JWT session doesn't auto-refresh from the DB.
+      await updateSession({ avatar: data.url });
+
       toast.success('Profile photo updated!');
     } catch {
       toast.error('Failed to upload photo. Please try again.');

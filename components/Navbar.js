@@ -148,8 +148,12 @@ export default function Navbar() {
             >
               {/* Notification badge on profile button */}
               <div className="relative">
-                <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center text-white text-[10px] font-bold ring-2 ring-white/20">
-                  {session.user.name?.charAt(0).toUpperCase()}
+                <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center text-white text-[10px] font-bold ring-2 ring-white/20 overflow-hidden">
+                  {session.user.avatar ? (
+                    <img src={session.user.avatar} alt={session.user.name} className="w-full h-full object-cover" />
+                  ) : (
+                    session.user.name?.charAt(0).toUpperCase()
+                  )}
                 </div>
                 {unreadNotifications > 0 && (
                   <span
@@ -178,8 +182,12 @@ export default function Navbar() {
                 >
                   <div className="px-4 py-3 border-b border-white/10">
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-green-500 flex items-center justify-center text-white font-bold text-sm shrink-0">
-                        {session.user.name?.charAt(0).toUpperCase()}
+                      <div className="w-9 h-9 rounded-full bg-green-500 flex items-center justify-center text-white font-bold text-sm shrink-0 overflow-hidden">
+                        {session.user.avatar ? (
+                          <img src={session.user.avatar} alt={session.user.name} className="w-full h-full object-cover" />
+                        ) : (
+                          session.user.name?.charAt(0).toUpperCase()
+                        )}
                       </div>
                       <div className="min-w-0">
                         <p className="text-sm font-semibold truncate" style={{ color: 'rgba(255,255,255,0.9)' }}>{session.user.name}</p>
