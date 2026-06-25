@@ -124,10 +124,15 @@ export default function Login() {
           </div>
 
           {/* Password */}
-          <div className={`${visible ? 'anim-fade-up hidden-init d3' : 'hidden-init'}`}>
-            <label className="block text-xs font-semibold uppercase tracking-widest text-white/40 mb-2">
-              Password
-            </label>
+<div className={`${visible ? 'anim-fade-up hidden-init d3' : 'hidden-init'}`}>
+  <div className="flex items-center justify-between mb-2">
+    <label className="text-xs font-semibold uppercase tracking-widest text-white/40">
+      Password
+    </label>
+    <Link href="/forgot-password" className="text-xs text-green-400/70 hover:text-green-400 transition">
+      Forgot password?
+    </Link>
+  </div>
             <div className="relative">
               <Lock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/25" />
               <input
