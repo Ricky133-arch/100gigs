@@ -58,8 +58,9 @@ export async function GET() {
     }
 
     await connectDB();
+    // ── 'bankDetails' added so the saved bank account persists across reloads/logins ──
     const user = await User.findById(session.user.id).select(
-      'verificationStatus verificationDoc verificationSubmittedAt verificationReviewedAt verificationRejectionReason'
+      'verificationStatus verificationDoc verificationSubmittedAt verificationReviewedAt verificationRejectionReason bankDetails'
     );
 
     return NextResponse.json(user);

@@ -29,7 +29,7 @@ export async function PATCH(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { name, phone, bio, location, skills, avatar, username, socialLinks } = await request.json();
+    const { name, phone, bio, location, skills, avatar, username, socialLinks, bankDetails } = await request.json();
 
     await connectDB();
 
@@ -60,6 +60,49 @@ export async function PATCH(request) {
     // Social links — merge with existing so partial updates work
     if (socialLinks !== undefined) {
       updateData.socialLinks = socialLinks;
+    }
+
+    // ── Bank details — also creates a Paystack Transfer Recipient ───────
+    // This is required before any automatic payout can be sent to this
+    // provider. We do this BEFORE saving so we never store bank details
+    // without a working recipientCode.
+    if (bankDetails !== undefined && bankDetails.accountNumber) {
+      if (session.user.role !== 'provider') {
+        return NextResponse.json({ error: 'Only providers can add bank details' }, { status: 403 });
+      }
+
+      const recipientRes = await fetch('https://api.paystack.co/transferrecipient', {
+        method:  'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type:           'nuban',
+          name:           bankDetails.accountName,
+          account_number: bankDetails.accountNumber,
+          bank_code:      bankDetails.bankCode,
+          currency:       'NGN',
+        }),
+      });
+      const recipientData = await recipientRes.json();
+
+      if (!recipientData.status) {
+        console.error('[PROFILE] Recipient creation failed:', recipientData);
+        return NextResponse.json(
+          { error: recipientData.message || 'Failed to register bank account with payment provider. Please check your details and try again.' },
+          { status: 400 }
+        );
+      }
+
+      updateData.bankDetails = {
+        bankCode:      bankDetails.bankCode,
+        bankName:      bankDetails.bankName,
+        accountNumber: bankDetails.accountNumber,
+        accountName:   bankDetails.accountName,
+        recipientCode: recipientData.data.recipient_code,
+        verifiedAt:    new Date(),
+      };
     }
 
     const user = await User.findByIdAndUpdate(

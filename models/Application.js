@@ -2,27 +2,39 @@ import mongoose from 'mongoose';
 
 const ApplicationSchema = new mongoose.Schema({
   job: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Job',
+    type:     mongoose.Schema.Types.ObjectId,
+    ref:      'Job',
     required: true,
   },
-  applicant: { // ✅ renamed from 'provider'
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+  applicant: {
+    type:     mongoose.Schema.Types.ObjectId,
+    ref:      'User',
     required: true,
   },
   coverLetter: {
-    type: String,
+    type:     String,
     required: true,
   },
   proposedRate: {
     type: Number,
   },
   status: {
-    type: String,
-    enum: ['pending', 'accepted', 'rejected'],
+    type:    String,
+    enum:    ['pending', 'accepted', 'rejected', 'completed'],
     default: 'pending',
   },
-}, { timestamps: true }); // ✅ use timestamps instead of manual createdAt
+  // Set when client marks job as done
+  completedAt: {
+    type: Date,
+  },
+  // Set when payment is made through 100Gigs
+  paidAt: {
+    type: Date,
+  },
+  paymentReference: {
+    type: String,
+  },
+}, { timestamps: true });
 
-export default mongoose.models.Application || mongoose.model('Application', ApplicationSchema);
+export default mongoose.models.Application ||
+  mongoose.model('Application', ApplicationSchema);

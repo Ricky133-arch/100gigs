@@ -32,6 +32,15 @@ const UserSchema = new mongoose.Schema({
     youtube:   { type: String, default: '' },
   },
 
+  // ── Bank details (providers only) ───────────────────────────────────────
+  bankDetails: {
+    bankName:      { type: String, default: '' },
+    bankCode:      { type: String, default: '' }, // Paystack bank code
+    accountNumber: { type: String, default: '' },
+    accountName:   { type: String, default: '' }, // verified by Paystack
+    verified:      { type: Boolean, default: false }, // true after Paystack resolved it
+  },
+
   // ── Verification (providers only) ──────────────────────────────────────
   verificationStatus: {
     type:    String,

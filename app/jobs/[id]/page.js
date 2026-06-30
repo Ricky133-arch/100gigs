@@ -2,58 +2,72 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { MapPin, Clock, MessageCircle, Users, CheckCircle, XCircle, Star, ArrowRight, Loader2, Briefcase } from 'lucide-react';
+import {
+  MapPin, Clock, MessageCircle, Users, CheckCircle, XCircle,
+  Star, ArrowRight, Loader2, Briefcase, CreditCard, ShieldCheck,
+  PartyPopper,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import Link from 'next/link';
 import VerifiedBadge from '@/components/VerifiedBadge';
 
 const glass = {
-  background: 'rgba(255,255,255,0.04)',
-  border: '1px solid rgba(255,255,255,0.08)',
-  backdropFilter: 'blur(12px)',
-  WebkitBackdropFilter: 'blur(12px)',
+  background:          'rgba(255,255,255,0.04)',
+  border:              '1px solid rgba(255,255,255,0.08)',
+  backdropFilter:      'blur(12px)',
+  WebkitBackdropFilter:'blur(12px)',
 };
 
 const inputStyle = {
   background: 'rgba(255,255,255,0.06)',
-  border: '1px solid rgba(255,255,255,0.1)',
-  color: 'white',
+  border:     '1px solid rgba(255,255,255,0.1)',
+  color:      'white',
 };
 
 const onFocus = e => e.target.style.borderColor = 'rgba(74,222,128,0.5)';
 const onBlur  = e => e.target.style.borderColor = 'rgba(255,255,255,0.1)';
 
-// ── Helper: treat admin the same as client for application management ──
 const canManageApplications = (role) => role === 'client' || role === 'admin';
 
 export default function JobDetails() {
-  const { id } = useParams();
+  const { id }            = useParams();
   const { data: session } = useSession();
-  const router = useRouter();
+  const router            = useRouter();
 
-  const [job, setJob] = useState(null);
-  const [applications, setApplications] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [applying, setApplying] = useState(false);
-  const [coverLetter, setCoverLetter] = useState('');
-  const [proposedRate, setProposedRate] = useState('');
-  const [updatingStatus, setUpdatingStatus] = useState(null);
+  const [job,              setJob]              = useState(null);
+  const [applications,     setApplications]     = useState([]);
+  const [loading,          setLoading]          = useState(true);
+  const [applying,         setApplying]         = useState(false);
+  const [coverLetter,      setCoverLetter]      = useState('');
+  const [proposedRate,     setProposedRate]     = useState('');
+  const [updatingStatus,   setUpdatingStatus]   = useState(null);
 
-  const [showRatingModal, setShowRatingModal] = useState(false);
-  const [ratingTarget, setRatingTarget] = useState(null);
-  const [ratingValue, setRatingValue] = useState(0);
-  const [reviewText, setReviewText] = useState('');
+  // Rating
+  const [showRatingModal,  setShowRatingModal]  = useState(false);
+  const [ratingTarget,     setRatingTarget]     = useState(null);
+  const [ratingValue,      setRatingValue]      = useState(0);
+  const [reviewText,       setReviewText]       = useState('');
   const [submittingRating, setSubmittingRating] = useState(false);
+
+  // Mark complete
+  const [showCompleteModal,  setShowCompleteModal]  = useState(false);
+  const [completeTarget,     setCompleteTarget]     = useState(null);
+  const [markingComplete,    setMarkingComplete]    = useState(false);
+
+  // Payment
+  const [showPaymentModal,   setShowPaymentModal]   = useState(false);
+  const [paymentTarget,      setPaymentTarget]      = useState(null);
+  const [payAmount,          setPayAmount]          = useState('');
+  const [initiatingPayment,  setInitiatingPayment]  = useState(false);
 
   useEffect(() => { fetchJob(); }, [id, session]);
 
   const fetchJob = async () => {
     try {
-      const res = await fetch(`/api/jobs/${id}`);
+      const res  = await fetch(`/api/jobs/${id}`);
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
       setJob(data);
-      // ── Admins can also view applications, same as the job's client ──
       if (canManageApplications(session?.user?.role)) await fetchApplications();
     } catch { toast.error('Failed to load job'); }
     finally { setLoading(false); }
@@ -67,15 +81,16 @@ export default function JobDetails() {
   };
 
   const handleApply = async () => {
-    if (!session) { toast.error('Please login to apply'); router.push('/login'); return; }
+    if (!session)                         { toast.error('Please login to apply'); router.push('/login'); return; }
     if (session.user.role !== 'provider') { toast.error('Only service providers can apply'); return; }
-    if (!coverLetter.trim()) { toast.error('Please write a cover letter'); return; }
+    if (!coverLetter.trim())              { toast.error('Please write a cover letter'); return; }
+
     setApplying(true);
     try {
-      const res = await fetch('/api/applications', {
-        method: 'POST',
+      const res  = await fetch('/api/applications', {
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId: id, coverLetter, proposedRate: proposedRate ? Number(proposedRate) : null }),
+        body:    JSON.stringify({ jobId: id, coverLetter, proposedRate: proposedRate ? Number(proposedRate) : null }),
       });
       const data = await res.json();
       if (res.ok) { toast.success('Application sent!'); setCoverLetter(''); setProposedRate(''); }
@@ -88,12 +103,21 @@ export default function JobDetails() {
     setUpdatingStatus(applicationId);
     try {
       const res = await fetch(`/api/jobs/${id}/applications`, {
-        method: 'PATCH',
+        method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ applicationId, status }),
+        body:    JSON.stringify({ applicationId, status }),
       });
-      if (res.ok) { toast.success(`Application ${status}`); await fetchApplications(); }
-      else { const d = await res.json(); toast.error(d.error || 'Failed'); }
+      if (res.ok) {
+        toast.success(
+          status === 'accepted'  ? 'Application accepted!' :
+          status === 'rejected'  ? 'Application rejected'  :
+          status === 'completed' ? 'Job marked as completed!' : 'Updated'
+        );
+        await fetchJob(); // refresh both job status and applications
+      } else {
+        const d = await res.json();
+        toast.error(d.error || 'Failed');
+      }
     } catch { toast.error('Something went wrong'); }
     finally { setUpdatingStatus(null); }
   };
@@ -111,10 +135,10 @@ export default function JobDetails() {
     if (!ratingValue) { toast.error('Please select a rating'); return; }
     setSubmittingRating(true);
     try {
-      const res = await fetch('/api/ratings', {
-        method: 'POST',
+      const res  = await fetch('/api/ratings', {
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ providerId: ratingTarget._id, jobId: id, rating: ratingValue, review: reviewText }),
+        body:    JSON.stringify({ providerId: ratingTarget._id, jobId: id, rating: ratingValue, review: reviewText }),
       });
       const data = await res.json();
       if (res.ok) { toast.success('Rating submitted!'); setShowRatingModal(false); await fetchApplications(); }
@@ -123,10 +147,59 @@ export default function JobDetails() {
     finally { setSubmittingRating(false); }
   };
 
+  // ── Mark as complete ───────────────────────────────────────────────────────
+  const confirmComplete = (app) => {
+    setCompleteTarget(app);
+    setShowCompleteModal(true);
+  };
+
+  const handleMarkComplete = async () => {
+    if (!completeTarget) return;
+    setMarkingComplete(true);
+    try {
+      await updateApplicationStatus(completeTarget._id, 'completed');
+      setShowCompleteModal(false);
+      // After marking complete, open payment modal
+      setPaymentTarget(completeTarget);
+      setPayAmount(completeTarget.proposedRate || job?.budgetMax || '');
+      setShowPaymentModal(true);
+    } catch {
+      toast.error('Something went wrong');
+    } finally {
+      setMarkingComplete(false);
+    }
+  };
+
+  // ── Payment ────────────────────────────────────────────────────────────────
+  const initiatePayment = async () => {
+    if (!payAmount || Number(payAmount) < 100) {
+      toast.error('Please enter a valid amount (min ₦100)');
+      return;
+    }
+    setInitiatingPayment(true);
+    try {
+      const res  = await fetch('/api/payment/initialize', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          jobId:         id,
+          applicationId: paymentTarget._id,
+          amount:        Number(payAmount),
+          providerId:    paymentTarget.applicant._id,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || 'Failed to initialize payment'); return; }
+      window.location.href = data.authorizationUrl;
+    } catch { toast.error('Something went wrong'); }
+    finally { setInitiatingPayment(false); }
+  };
+
   const statusStyle = (status) => ({
-    accepted: { background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.2)', color: '#4ade80' },
-    rejected: { background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.2)', color: '#f87171' },
-    pending:  { background: 'rgba(251,191,36,0.1)',  border: '1px solid rgba(251,191,36,0.2)',  color: '#fbbf24' },
+    accepted:  { background: 'rgba(74,222,128,0.1)',  border: '1px solid rgba(74,222,128,0.2)',  color: '#4ade80' },
+    rejected:  { background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.2)', color: '#f87171' },
+    pending:   { background: 'rgba(251,191,36,0.1)',  border: '1px solid rgba(251,191,36,0.2)',  color: '#fbbf24' },
+    completed: { background: 'rgba(74,222,128,0.1)',  border: '1px solid rgba(74,222,128,0.2)',  color: '#4ade80' },
   }[status] || {});
 
   if (loading) return (
@@ -141,7 +214,12 @@ export default function JobDetails() {
     </div>
   );
 
-  const labelClass = "block text-xs font-semibold uppercase tracking-widest text-white/40 mb-2";
+  const labelClass      = "block text-xs font-semibold uppercase tracking-widest text-white/40 mb-2";
+  const commission      = payAmount ? Math.round(Number(payAmount) * 0.10) : 0;
+  const providerGets    = payAmount ? Number(payAmount) - commission : 0;
+  const acceptedApp     = applications.find(a => a.status === 'accepted');
+  const completedApp    = applications.find(a => a.status === 'completed');
+  const isJobCompleted  = job.status === 'completed';
 
   return (
     <div className="min-h-screen bg-[#080f0a] relative overflow-x-hidden">
@@ -154,7 +232,6 @@ export default function JobDetails() {
         .drift { animation: drift 14s ease-in-out infinite; }
       `}</style>
 
-      {/* Orbs */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute top-[-10%] right-[-5%] w-[500px] h-[500px] rounded-full drift"
           style={{ background: 'radial-gradient(circle, rgba(22,163,74,0.12) 0%, transparent 70%)' }} />
@@ -168,7 +245,7 @@ export default function JobDetails() {
 
       <div className="relative max-w-3xl mx-auto px-4 py-10 space-y-4">
 
-        {/* Job header card */}
+        {/* Job header */}
         <div className="p-7 rounded-3xl" style={glass}>
           <div className="flex justify-between items-start mb-4 gap-4">
             <div className="min-w-0">
@@ -219,6 +296,40 @@ export default function JobDetails() {
           </div>
         )}
 
+        {/* ── Job completed banner ─────────────────────────────────────────── */}
+        {isJobCompleted && (
+          <div className="p-5 rounded-2xl"
+            style={{ background: 'rgba(74,222,128,0.06)', border: '1px solid rgba(74,222,128,0.2)' }}>
+            <div className="flex items-center gap-3 mb-4">
+              <CheckCircle size={20} className="text-green-400 shrink-0" />
+              <div>
+                <p className="text-sm font-bold text-green-400">Job Completed!</p>
+                <p className="text-xs text-white/40 mt-0.5">
+                  You marked this job as done. Pay the provider through 100Gigs for a secure transaction.
+                </p>
+              </div>
+            </div>
+            {completedApp && !completedApp.paidAt && (
+              <button
+                onClick={() => {
+                  setPaymentTarget(completedApp);
+                  setPayAmount(completedApp.proposedRate || job?.budgetMax || '');
+                  setShowPaymentModal(true);
+                }}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition active:scale-95"
+                style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 16px rgba(22,163,74,0.3)' }}
+              >
+                <CreditCard size={15} /> Pay via 100Gigs
+              </button>
+            )}
+            {completedApp?.paidAt && (
+              <p className="text-xs text-green-400 flex items-center gap-1.5">
+                <CheckCircle size={12} /> Payment sent through 100Gigs
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Provider — Apply */}
         {session?.user?.role === 'provider' && (
           <div className="p-6 rounded-2xl" style={glass}>
@@ -229,7 +340,6 @@ export default function JobDetails() {
               </div>
               <p className="text-sm font-semibold text-white">Apply for this Job</p>
             </div>
-
             <div className="space-y-4">
               <div>
                 <label className={labelClass}>Cover Letter <span className="text-red-400">*</span></label>
@@ -247,10 +357,7 @@ export default function JobDetails() {
               </div>
               <button onClick={handleApply} disabled={applying || !coverLetter.trim()}
                 className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-semibold text-sm text-white transition-all active:scale-[0.99] disabled:opacity-50 group"
-                style={{
-                  background: 'linear-gradient(135deg,#16a34a,#15803d)',
-                  boxShadow: '0 4px 20px rgba(22,163,74,0.3)',
-                }}>
+                style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 20px rgba(22,163,74,0.3)' }}>
                 {applying
                   ? <><Loader2 size={16} className="animate-spin" /> Sending...</>
                   : <>Send Application <ArrowRight size={15} className="group-hover:translate-x-0.5 transition-transform" /></>
@@ -308,9 +415,11 @@ export default function JobDetails() {
                       </p>
                     )}
 
-                    <div className="flex flex-wrap gap-2 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div className="flex flex-wrap gap-2 pt-3"
+                      style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+
                       <button onClick={() => startChat(app.applicant)}
-                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white transition"
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition"
                         style={{ background: 'rgba(74,222,128,0.15)', border: '1px solid rgba(74,222,128,0.25)', color: '#4ade80' }}>
                         <MessageCircle size={13} /> Chat
                       </button>
@@ -333,7 +442,37 @@ export default function JobDetails() {
                         </>
                       )}
 
-                      {app.status === 'accepted' && (
+                      {/* ── Mark as Complete button (accepted apps only) ── */}
+                      {app.status === 'accepted' && !isJobCompleted && (
+                        <button onClick={() => confirmComplete(app)}
+                          disabled={updatingStatus === app._id}
+                          className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition disabled:opacity-50"
+                          style={{ background: 'rgba(74,222,128,0.15)', border: '1px solid rgba(74,222,128,0.3)', color: '#4ade80' }}>
+                          <CheckCircle size={13} /> Mark as Complete
+                        </button>
+                      )}
+
+                      {/* ── Pay button (completed, not yet paid) ── */}
+                      {app.status === 'completed' && !app.paidAt && (
+                        <button onClick={() => {
+                          setPaymentTarget(app);
+                          setPayAmount(app.proposedRate || job?.budgetMax || '');
+                          setShowPaymentModal(true);
+                        }}
+                          className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition"
+                          style={{ background: 'linear-gradient(135deg,rgba(22,163,74,0.3),rgba(21,128,61,0.3))', border: '1px solid rgba(74,222,128,0.4)', color: '#4ade80' }}>
+                          <CreditCard size={13} /> Pay via 100Gigs
+                        </button>
+                      )}
+
+                      {app.status === 'completed' && app.paidAt && (
+                        <span className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold"
+                          style={{ background: 'rgba(74,222,128,0.08)', color: '#4ade80' }}>
+                          <CheckCircle size={13} /> Paid
+                        </span>
+                      )}
+
+                      {(app.status === 'accepted' || app.status === 'completed') && (
                         <button onClick={() => openRatingModal(app.applicant)}
                           className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition"
                           style={{ background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.2)', color: '#fbbf24' }}>
@@ -349,15 +488,143 @@ export default function JobDetails() {
         )}
       </div>
 
+      {/* ── Mark as Complete Modal ────────────────────────────────────────── */}
+      {showCompleteModal && completeTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)' }}
+          onClick={() => setShowCompleteModal(false)}>
+          <div className="w-full max-w-md rounded-3xl p-7"
+            style={{ background: '#080f0a', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 24px 64px rgba(0,0,0,0.5)' }}
+            onClick={e => e.stopPropagation()}>
+
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
+                style={{ background: 'rgba(74,222,128,0.12)' }}>
+                <PartyPopper size={32} className="text-green-400" />
+              </div>
+              <h2 className="text-xl font-bold text-white mb-2">Job Done?</h2>
+              <p className="text-white/40 text-sm leading-relaxed">
+                Confirm that <strong className="text-white/70">{completeTarget.applicant?.name}</strong> has
+                completed the work to your satisfaction. This will mark the job as done and
+                you'll be prompted to pay through 100Gigs.
+              </p>
+            </div>
+
+            <div className="p-4 rounded-xl mb-5"
+              style={{ background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)' }}>
+              <p className="text-xs text-yellow-400/80 leading-relaxed">
+                ⚠️ Only mark as complete if you are satisfied with the work. Once marked, the job
+                cannot be reopened.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button onClick={() => setShowCompleteModal(false)}
+                className="flex-1 py-3 rounded-xl text-sm font-semibold text-white/50"
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                Not Yet
+              </button>
+              <button onClick={handleMarkComplete} disabled={markingComplete}
+                className="flex-1 py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-50 flex items-center justify-center gap-2"
+                style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 16px rgba(22,163,74,0.3)' }}>
+                {markingComplete
+                  ? <><Loader2 size={15} className="animate-spin" /> Confirming...</>
+                  : <><CheckCircle size={15} /> Yes, Job is Done</>
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Payment Modal ─────────────────────────────────────────────────── */}
+      {showPaymentModal && paymentTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)' }}
+          onClick={() => setShowPaymentModal(false)}>
+          <div className="w-full max-w-md rounded-3xl p-7"
+            style={{ background: '#080f0a', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 24px 64px rgba(0,0,0,0.5)' }}
+            onClick={e => e.stopPropagation()}>
+
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-11 h-11 rounded-xl flex items-center justify-center"
+                style={{ background: 'rgba(74,222,128,0.12)' }}>
+                <CreditCard size={20} className="text-green-400" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-white">Pay via 100Gigs</h2>
+                <p className="text-xs text-white/35">Paying {paymentTarget.applicant?.name}</p>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-xs font-semibold uppercase tracking-widest text-white/40 mb-2">
+                Amount to Pay (₦)
+              </label>
+              <input
+                type="number"
+                value={payAmount}
+                onChange={e => setPayAmount(e.target.value)}
+                placeholder="Enter amount"
+                className="w-full px-4 py-3.5 rounded-xl text-sm outline-none transition text-white placeholder-white/20 text-lg font-semibold"
+                style={inputStyle}
+                onFocus={onFocus}
+                onBlur={onBlur}
+              />
+            </div>
+
+            {payAmount && Number(payAmount) >= 100 && (
+              <div className="p-4 rounded-xl mb-5 space-y-2.5"
+                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <p className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-3">Breakdown</p>
+                {[
+                  { label: 'You pay',                                        value: `₦${Number(payAmount).toLocaleString()}`,  color: 'text-white'   },
+                  { label: '100Gigs fee (10%)',                              value: `₦${commission.toLocaleString()}`,         color: 'text-red-400' },
+                  { label: `${paymentTarget.applicant?.name} receives`,      value: `₦${providerGets.toLocaleString()}`,       color: 'text-green-400' },
+                ].map(row => (
+                  <div key={row.label} className="flex items-center justify-between">
+                    <span className="text-xs text-white/40">{row.label}</span>
+                    <span className={`text-sm font-semibold ${row.color}`}>{row.value}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-start gap-2 mb-5 p-3 rounded-xl"
+              style={{ background: 'rgba(74,222,128,0.05)', border: '1px solid rgba(74,222,128,0.1)' }}>
+              <ShieldCheck size={14} className="text-green-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-white/40 leading-relaxed">
+                Powered by Paystack. Your payment is secure. The provider is notified immediately after payment.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button onClick={() => setShowPaymentModal(false)}
+                className="flex-1 py-3 rounded-xl text-sm font-semibold text-white/50"
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                Maybe Later
+              </button>
+              <button
+                onClick={initiatePayment}
+                disabled={initiatingPayment || !payAmount || Number(payAmount) < 100}
+                className="flex-1 py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-50 flex items-center justify-center gap-2"
+                style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 16px rgba(22,163,74,0.3)' }}>
+                {initiatingPayment
+                  ? <><Loader2 size={15} className="animate-spin" /> Redirecting...</>
+                  : <><CreditCard size={15} /> Pay ₦{Number(payAmount || 0).toLocaleString()}</>
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Rating Modal */}
       {showRatingModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)' }}>
-          <div className="w-full max-w-md rounded-3xl p-7" style={{
-            background: 'rgba(8,12,10,0.95)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
-          }}>
+          <div className="w-full max-w-md rounded-3xl p-7"
+            style={{ background: 'rgba(8,12,10,0.95)', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 24px 64px rgba(0,0,0,0.5)' }}>
             <h2 className="text-xl font-bold text-white mb-1">Rate {ratingTarget?.name}</h2>
             <p className="text-white/35 text-sm mb-6">How was your experience with this provider?</p>
 
@@ -378,12 +645,12 @@ export default function JobDetails() {
 
             <div className="flex gap-3">
               <button onClick={() => setShowRatingModal(false)}
-                className="flex-1 py-3 rounded-xl text-sm font-semibold text-white/50 transition hover:text-white"
+                className="flex-1 py-3 rounded-xl text-sm font-semibold text-white/50"
                 style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
                 Cancel
               </button>
               <button onClick={submitRating} disabled={submittingRating || !ratingValue}
-                className="flex-1 py-3 rounded-xl text-sm font-semibold text-white transition disabled:opacity-50"
+                className="flex-1 py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
                 style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 16px rgba(22,163,74,0.3)' }}>
                 {submittingRating ? 'Submitting...' : 'Submit Rating'}
               </button>

@@ -24,16 +24,16 @@ const LOCATIONS = [
   'Port Harcourt City', 'Other',
 ];
 
-// Social platform config
+// Social platform config — uses www. subdomain + query params to force
+// mobile browsers to open the web profile instead of hijacking into the app
 const SOCIAL_PLATFORMS = [
-  
   {
     key:         'instagram',
     label:       'Instagram',
     placeholder: '@yourhandle',
     hint:        'Share your work portfolio on Instagram',
     icon:        '📸',
-    buildUrl:    (v) => `https://instagram.com/${v.replace('@', '')}`,
+    buildUrl:    (v) => `https://www.instagram.com/${v.replace('@', '')}/?hl=en`,
   },
   {
     key:         'facebook',
@@ -41,7 +41,7 @@ const SOCIAL_PLATFORMS = [
     placeholder: 'your.page or full URL',
     hint:        'Your Facebook profile or business page',
     icon:        '👥',
-    buildUrl:    (v) => v.startsWith('http') ? v : `https://facebook.com/${v}`,
+    buildUrl:    (v) => v.startsWith('http') ? v : `https://www.facebook.com/${v}`,
   },
   {
     key:         'twitter',
@@ -49,7 +49,7 @@ const SOCIAL_PLATFORMS = [
     placeholder: '@yourhandle',
     hint:        'Your X / Twitter handle',
     icon:        '𝕏',
-    buildUrl:    (v) => `https://x.com/${v.replace('@', '')}`,
+    buildUrl:    (v) => `https://www.x.com/${v.replace('@', '')}`,
   },
   {
     key:         'tiktok',
@@ -57,7 +57,7 @@ const SOCIAL_PLATFORMS = [
     placeholder: '@yourhandle',
     hint:        'Short videos of your work build serious trust',
     icon:        '🎵',
-    buildUrl:    (v) => `https://tiktok.com/@${v.replace('@', '')}`,
+    buildUrl:    (v) => `https://www.tiktok.com/@${v.replace('@', '')}`,
   },
   {
     key:         'linkedin',
@@ -65,7 +65,7 @@ const SOCIAL_PLATFORMS = [
     placeholder: 'your-name or full URL',
     hint:        'Professional profile for corporate clients',
     icon:        '💼',
-    buildUrl:    (v) => v.startsWith('http') ? v : `https://linkedin.com/in/${v}`,
+    buildUrl:    (v) => v.startsWith('http') ? v : `https://www.linkedin.com/in/${v}`,
   },
   {
     key:         'youtube',
@@ -73,7 +73,7 @@ const SOCIAL_PLATFORMS = [
     placeholder: '@yourchannel or full URL',
     hint:        'Video tutorials or completed project showcases',
     icon:        '▶️',
-    buildUrl:    (v) => v.startsWith('http') ? v : `https://youtube.com/@${v.replace('@', '')}`,
+    buildUrl:    (v) => v.startsWith('http') ? v : `https://www.youtube.com/@${v.replace('@', '')}`,
   },
 ];
 
@@ -107,7 +107,6 @@ const Section = ({ icon: Icon, title, children }) => (
 );
 
 export default function ProfilePage() {
-  // ── 'update' pulled from useSession so we can push avatar changes live ──
   const { data: session, status, update: updateSession } = useSession();
   const router = useRouter();
 
@@ -127,7 +126,7 @@ export default function ProfilePage() {
   const [saved,           setSaved]           = useState(false);
   const [copied,          setCopied]          = useState(false);
   const [usernameChecking, setUsernameChecking] = useState(false);
-  const [usernameAvailable, setUsernameAvailable] = useState(null); // null | true | false
+  const [usernameAvailable, setUsernameAvailable] = useState(null);
 
   useEffect(() => {
     if (status === 'unauthenticated') router.push('/login');
@@ -156,7 +155,6 @@ export default function ProfilePage() {
         verificationStatus: data.verificationStatus || 'unsubmitted',
         username:           data.username           || '',
         socialLinks: {
-          
           instagram: data.socialLinks?.instagram || '',
           facebook:  data.socialLinks?.facebook  || '',
           twitter:   data.socialLinks?.twitter   || '',
@@ -186,7 +184,6 @@ export default function ProfilePage() {
       : [...prev.skills, skill],
   }));
 
-  // ── Username availability check (debounced) ──────────────────────────────
   useEffect(() => {
     if (!profile.username || profile.username.length < 3) {
       setUsernameAvailable(null);
@@ -207,7 +204,6 @@ export default function ProfilePage() {
     return () => clearTimeout(timer);
   }, [profile.username]);
 
-  // ── Copy shareable link ──────────────────────────────────────────────────
   const shareableLink = typeof window !== 'undefined'
   ? profile.username
     ? `${window.location.origin}/u/${profile.username}`
@@ -221,7 +217,6 @@ export default function ProfilePage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // ── Avatar upload ────────────────────────────────────────────────────────
   const handleAvatarChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -243,10 +238,6 @@ export default function ProfilePage() {
       });
 
       setProfile(prev => ({ ...prev, avatar: data.url }));
-
-      // ── Push the new avatar into the live session immediately ──────
-      // Without this, the Navbar avatar wouldn't update until next login,
-      // since NextAuth's JWT session doesn't auto-refresh from the DB.
       await updateSession({ avatar: data.url });
 
       toast.success('Profile photo updated!');
@@ -258,7 +249,6 @@ export default function ProfilePage() {
     }
   };
 
-  // ── Save ─────────────────────────────────────────────────────────────────
   const handleSave = async e => {
     e.preventDefault();
     setSaving(true);
@@ -311,7 +301,6 @@ export default function ProfilePage() {
         select option { background: #111; color: white; }
       `}</style>
 
-      {/* Orbs */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute top-[-10%] right-[-5%] w-[500px] h-[500px] rounded-full drift"
           style={{ background: 'radial-gradient(circle, rgba(22,163,74,0.12) 0%, transparent 70%)' }} />
@@ -325,7 +314,6 @@ export default function ProfilePage() {
 
       <div className="relative max-w-2xl mx-auto px-4 py-12">
 
-        {/* Header */}
         <div className={`mb-8 opacity-0 ${visible ? 'fade-up' : ''}`}>
           <p className="text-xs font-semibold uppercase tracking-widest text-green-400/60 mb-2">Account</p>
           <h1 className="text-3xl font-bold text-white mb-1">My Profile</h1>
@@ -334,7 +322,6 @@ export default function ProfilePage() {
           </p>
         </div>
 
-        {/* Avatar card */}
         <div className={`flex items-center gap-5 p-5 rounded-2xl mb-6 opacity-0 ${visible ? 'fade-up d1' : ''}`}
           style={{ background: 'linear-gradient(135deg, rgba(22,163,74,0.15) 0%, rgba(5,150,105,0.1) 100%)', border: '1px solid rgba(74,222,128,0.2)' }}>
           <label className="relative shrink-0 cursor-pointer group">
@@ -374,7 +361,6 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        {/* ── Shareable profile link ──────────────────────────────────────── */}
         <div className={`p-5 rounded-2xl mb-4 opacity-0 ${visible ? 'fade-up d1' : ''}`}
           style={{ background: 'rgba(74,222,128,0.06)', border: '1px solid rgba(74,222,128,0.15)' }}>
           <div className="flex items-center gap-2 mb-3">
@@ -399,7 +385,6 @@ export default function ProfilePage() {
 
         <form onSubmit={handleSave} className="space-y-4">
 
-          {/* Basic Info */}
           <div className={`opacity-0 ${visible ? 'fade-up d2' : ''}`}>
             <Section icon={User} title="Basic Information">
               <div className="space-y-4">
@@ -415,7 +400,6 @@ export default function ProfilePage() {
                   <p className="text-xs text-white/20 mt-1.5">Email cannot be changed</p>
                 </div>
 
-                {/* Username */}
                 <div>
                   <label className={labelClass}>Custom Username</label>
                   <div className="flex items-center gap-0 rounded-xl overflow-hidden"
@@ -428,7 +412,6 @@ export default function ProfilePage() {
                       name="username"
                       value={profile.username}
                       onChange={e => {
-                        // Only allow valid chars as they type
                         const val = e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '');
                         setProfile(prev => ({ ...prev, username: val }));
                         setUsernameAvailable(null);
@@ -457,7 +440,6 @@ export default function ProfilePage() {
             </Section>
           </div>
 
-          {/* Contact */}
           <div className={`opacity-0 ${visible ? 'fade-up d3' : ''}`}>
             <Section icon={Phone} title="Contact & Location">
               <div className="space-y-4">
@@ -480,7 +462,6 @@ export default function ProfilePage() {
             </Section>
           </div>
 
-          {/* Bio */}
           <div className={`opacity-0 ${visible ? 'fade-up d4' : ''}`}>
             <Section icon={Briefcase} title="About You">
               <label className={labelClass}>Bio</label>
@@ -495,7 +476,6 @@ export default function ProfilePage() {
             </Section>
           </div>
 
-          {/* Skills (providers only) */}
           {session?.user?.role === 'provider' && (
             <div className={`opacity-0 ${visible ? 'fade-up d5' : ''}`}>
               <Section icon={Briefcase} title="Your Skills">
@@ -526,7 +506,6 @@ export default function ProfilePage() {
             </div>
           )}
 
-          {/* ── Social Links ─────────────────────────────────────────────── */}
           <div className={`opacity-0 ${visible ? 'fade-up d6' : ''}`}>
             <div className="p-6 rounded-2xl" style={glass}>
               <div className="flex items-center gap-2.5 mb-2">
@@ -582,7 +561,6 @@ export default function ProfilePage() {
             </div>
           </div>
 
-          {/* Save */}
           <div className={`opacity-0 ${visible ? 'fade-up d8' : ''}`}>
             <button type="submit" disabled={saving || usernameAvailable === false}
               className="w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-semibold text-white transition-all active:scale-[0.99] disabled:opacity-50 group"

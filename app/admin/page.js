@@ -7,8 +7,9 @@ import {
   Loader2, ShieldCheck, ShieldX, Clock, Users, Briefcase,
   ExternalLink, X, ShieldAlert, Search, Ban, CheckCircle,
   Trash2, ChevronDown, Filter, TrendingUp, AlertTriangle,
-  Eye, RefreshCw, UserCheck, UserX,
+  Eye, RefreshCw, UserCheck, UserX, CreditCard,
 } from 'lucide-react';
+import Link from 'next/link';
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const glass = {
@@ -210,12 +211,19 @@ export default function AdminDashboard() {
             <h1 className="text-3xl font-bold text-white">Dashboard</h1>
             <p className="text-white/30 text-sm mt-1">Manage users, verifications, and platform activity</p>
           </div>
-          <button onClick={() => { fetchStats(); fetchUsers(); }}
-            className="p-2.5 rounded-xl transition hover:bg-white/5"
-            style={{ color: 'rgba(255,255,255,0.4)' }}
-            title="Refresh">
-            <RefreshCw size={16} />
-          </button>
+          <div className="flex items-center gap-2">
+            <Link href="/admin/payments"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition"
+              style={{ background: 'rgba(74,222,128,0.12)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.25)' }}>
+              <CreditCard size={15} /> Payments
+            </Link>
+            <button onClick={() => { fetchStats(); fetchUsers(); }}
+              className="p-2.5 rounded-xl transition hover:bg-white/5"
+              style={{ color: 'rgba(255,255,255,0.4)' }}
+              title="Refresh">
+              <RefreshCw size={16} />
+            </button>
+          </div>
         </div>
 
         {/* ── Stats grid ──────────────────────────────────────────────────── */}
