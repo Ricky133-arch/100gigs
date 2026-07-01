@@ -24,40 +24,38 @@ const LOCATIONS = [
   'Port Harcourt City', 'Other',
 ];
 
-// Social platform config — uses www. subdomain + query params to force
-// mobile browsers to open the web profile instead of hijacking into the app
 const SOCIAL_PLATFORMS = [
   {
     key:         'instagram',
     label:       'Instagram',
-    placeholder: '@yourhandle',
+    placeholder: '@yourhandle or full URL',
     hint:        'Share your work portfolio on Instagram',
     icon:        '📸',
-    buildUrl:    (v) => `https://www.instagram.com/${v.replace('@', '')}/?hl=en`,
+    buildUrl:    (v) => v.startsWith('http') ? v : `https://instagram.com/${v.replace('@', '')}`,
   },
   {
     key:         'facebook',
     label:       'Facebook',
-    placeholder: 'your.page or full URL',
-    hint:        'Your Facebook profile or business page',
+    placeholder: 'Paste your full Facebook profile URL',
+    hint:        'Your Facebook profile or business page — paste the full link',
     icon:        '👥',
-    buildUrl:    (v) => v.startsWith('http') ? v : `https://www.facebook.com/${v}`,
+    buildUrl:    (v) => v.startsWith('http') ? v : `https://facebook.com/${v}`,
   },
   {
     key:         'twitter',
     label:       'X (Twitter)',
-    placeholder: '@yourhandle',
+    placeholder: '@yourhandle or full URL',
     hint:        'Your X / Twitter handle',
     icon:        '𝕏',
-    buildUrl:    (v) => `https://www.x.com/${v.replace('@', '')}`,
+    buildUrl:    (v) => v.startsWith('http') ? v : `https://x.com/${v.replace('@', '')}`,
   },
   {
     key:         'tiktok',
     label:       'TikTok',
-    placeholder: '@yourhandle',
+    placeholder: '@yourhandle or full URL',
     hint:        'Short videos of your work build serious trust',
     icon:        '🎵',
-    buildUrl:    (v) => `https://www.tiktok.com/@${v.replace('@', '')}`,
+    buildUrl:    (v) => v.startsWith('http') ? v : `https://tiktok.com/@${v.replace('@', '')}`,
   },
   {
     key:         'linkedin',
@@ -65,7 +63,7 @@ const SOCIAL_PLATFORMS = [
     placeholder: 'your-name or full URL',
     hint:        'Professional profile for corporate clients',
     icon:        '💼',
-    buildUrl:    (v) => v.startsWith('http') ? v : `https://www.linkedin.com/in/${v}`,
+    buildUrl:    (v) => v.startsWith('http') ? v : `https://linkedin.com/in/${v}`,
   },
   {
     key:         'youtube',
@@ -73,7 +71,7 @@ const SOCIAL_PLATFORMS = [
     placeholder: '@yourchannel or full URL',
     hint:        'Video tutorials or completed project showcases',
     icon:        '▶️',
-    buildUrl:    (v) => v.startsWith('http') ? v : `https://www.youtube.com/@${v.replace('@', '')}`,
+    buildUrl:    (v) => v.startsWith('http') ? v : `https://youtube.com/@${v.replace('@', '')}`,
   },
 ];
 

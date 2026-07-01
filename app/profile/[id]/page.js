@@ -13,12 +13,12 @@ const glass = {
 };
 
 const SOCIAL_PLATFORMS = [
-  { key: 'instagram', label: 'Instagram', icon: '📸', buildUrl: (v) => `https://www.instagram.com/${v.replace('@', '')}/?hl=en`,                   color: '#e1306c' },
-  { key: 'facebook',  label: 'Facebook',  icon: '👥', buildUrl: (v) => v.startsWith('http') ? v : `https://www.facebook.com/${v}`,                  color: '#1877f2' },
-  { key: 'twitter',   label: 'X',         icon: '𝕏',  buildUrl: (v) => `https://www.x.com/${v.replace('@', '')}`,                                  color: '#ffffff' },
-  { key: 'tiktok',    label: 'TikTok',    icon: '🎵', buildUrl: (v) => `https://www.tiktok.com/@${v.replace('@', '')}`,                             color: '#ff0050' },
-  { key: 'linkedin',  label: 'LinkedIn',  icon: '💼', buildUrl: (v) => v.startsWith('http') ? v : `https://www.linkedin.com/in/${v}`,               color: '#0a66c2' },
-  { key: 'youtube',   label: 'YouTube',   icon: '▶️', buildUrl: (v) => v.startsWith('http') ? v : `https://www.youtube.com/@${v.replace('@', '')}`, color: '#ff0000' },
+  { key: 'instagram', label: 'Instagram', icon: '📸', buildUrl: (v) => v.startsWith('http') ? v : `https://www.instagram.com/${v.replace('@', '')}/?hl=en`, color: '#e1306c' },
+  { key: 'facebook',  label: 'Facebook',  icon: '👥', buildUrl: (v) => v.startsWith('http') ? v : `https://www.facebook.com/${v}`,                          color: '#1877f2' },
+  { key: 'twitter',   label: 'X',         icon: '𝕏',  buildUrl: (v) => v.startsWith('http') ? v : `https://www.x.com/${v.replace('@', '')}`,               color: '#ffffff' },
+  { key: 'tiktok',    label: 'TikTok',    icon: '🎵', buildUrl: (v) => v.startsWith('http') ? v : `https://www.tiktok.com/@${v.replace('@', '')}`,          color: '#ff0050' },
+  { key: 'linkedin',  label: 'LinkedIn',  icon: '💼', buildUrl: (v) => v.startsWith('http') ? v : `https://www.linkedin.com/in/${v}`,                       color: '#0a66c2' },
+  { key: 'youtube',   label: 'YouTube',   icon: '▶️', buildUrl: (v) => v.startsWith('http') ? v : `https://www.youtube.com/@${v.replace('@', '')}`,         color: '#ff0000' },
 ];
 
 function StarDisplay({ rating, size = 16 }) {
