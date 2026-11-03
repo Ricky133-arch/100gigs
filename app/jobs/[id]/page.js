@@ -159,7 +159,7 @@ export default function JobDetails() {
 
   const handleApply = async (e) => {
     e?.preventDefault();
-    if (!session) { router.push('/login'); return; }
+    if (!session) { router.push(`/login?callbackUrl=${encodeURIComponent(`/jobs/${id}`)}`); return; }
     if (role !== 'provider') { toast.error('Only service providers can apply'); return; }
     if (!coverLetter.trim()) { toast.error('Write a short note to the client'); return; }
 
@@ -429,8 +429,8 @@ export default function JobDetails() {
                   Create a free provider account to apply, send your rate and chat with the client.
                 </p>
                 <div className="mt-6 flex flex-col gap-3">
-                  <Link href="/signup" className={btnPrimary}>Sign up to apply <ArrowRight size={15} /></Link>
-                  <Link href="/login" className="text-center text-[13px] text-white/50 transition hover:text-white">I already have an account</Link>
+                  <Link href={`/signup?callbackUrl=${encodeURIComponent(`/jobs/${id}`)}`} className={btnPrimary}>Sign up to apply <ArrowRight size={15} /></Link>
+                  <Link href={`/login?callbackUrl=${encodeURIComponent(`/jobs/${id}`)}`} className="text-center text-[13px] text-white/50 transition hover:text-white">I already have an account</Link>
                 </div>
               </div>
             )}
