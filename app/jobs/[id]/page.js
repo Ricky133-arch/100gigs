@@ -43,6 +43,8 @@ const STATUS = {
   rejected: { dot: 'bg-red-400', text: 'text-red-400', label: 'Declined' },
   completed: { dot: 'bg-green-400', text: 'text-green-400', label: 'Completed' },
   closed: { dot: 'bg-white/30', text: 'text-white/40', label: 'Closed' },
+  'in-progress': { dot: 'bg-sky-300', text: 'text-sky-300', label: 'In progress' },
+  cancelled: { dot: 'bg-white/30', text: 'text-white/40', label: 'Cancelled' },
 };
 
 function Status({ value }) {

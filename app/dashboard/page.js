@@ -40,6 +40,9 @@ const STATUS_STYLE = {
   accepted: { dot: 'bg-green-400', text: 'text-green-400', label: 'Accepted' },
   pending: { dot: 'bg-amber-300', text: 'text-amber-300', label: 'Pending' },
   rejected: { dot: 'bg-red-400', text: 'text-red-400', label: 'Not selected' },
+  'in-progress': { dot: 'bg-sky-300', text: 'text-sky-300', label: 'In progress' },
+  completed: { dot: 'bg-green-400', text: 'text-green-400', label: 'Completed' },
+  cancelled: { dot: 'bg-white/30', text: 'text-white/40', label: 'Cancelled' },
 };
 
 function Status({ value }) {
