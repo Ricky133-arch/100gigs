@@ -3,473 +3,488 @@ import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  MapPin, Users, Briefcase, Star, ArrowRight, CheckCircle,
-  Clock, Shield, Zap, Wrench, Hammer, Car, Wind, Camera,
-  Palette, BookOpen, PartyPopper, Truck, Sparkles, Search,
-} from 'lucide-react';
+import { ArrowRight, ArrowUpRight, Search } from 'lucide-react';
+
+/* ────────────────────────────────────────────────────────────
+   Data
+   ──────────────────────────────────────────────────────────── */
 
 const CATEGORIES = [
-  { name: 'Plumbing', icon: <Wrench size={24} />, color: 'bg-blue-50 dark:bg-blue-900/20', iconColor: 'text-blue-500' },
-  { name: 'Electrical', icon: <Zap size={24} />, color: 'bg-yellow-50 dark:bg-yellow-900/20', iconColor: 'text-yellow-500' },
-  { name: 'Makeup & Hair', icon: <Sparkles size={24} />, color: 'bg-pink-50 dark:bg-pink-900/20', iconColor: 'text-pink-500' },
-  { name: 'Carpentry', icon: <Hammer size={24} />, color: 'bg-orange-50 dark:bg-orange-900/20', iconColor: 'text-orange-500' },
-  { name: 'Car Repair', icon: <Car size={24} />, color: 'bg-red-50 dark:bg-red-900/20', iconColor: 'text-red-500' },
-  { name: 'Cleaning', icon: <Sparkles size={24} />, color: 'bg-cyan-50 dark:bg-cyan-900/20', iconColor: 'text-cyan-500' },
-  { name: 'AC Repair', icon: <Wind size={24} />, color: 'bg-sky-50 dark:bg-sky-900/20', iconColor: 'text-sky-500' },
-  { name: 'Photography', icon: <Camera size={24} />, color: 'bg-purple-50 dark:bg-purple-900/20', iconColor: 'text-purple-500' },
-  { name: 'Graphic Design', icon: <Palette size={24} />, color: 'bg-violet-50 dark:bg-violet-900/20', iconColor: 'text-violet-500' },
-  { name: 'Tutoring', icon: <BookOpen size={24} />, color: 'bg-green-50 dark:bg-green-900/20', iconColor: 'text-green-500' },
-  { name: 'Event Planning', icon: <PartyPopper size={24} />, color: 'bg-rose-50 dark:bg-rose-900/20', iconColor: 'text-rose-500' },
-  { name: 'Delivery', icon: <Truck size={24} />, color: 'bg-amber-50 dark:bg-amber-900/20', iconColor: 'text-amber-500' },
+  { name: 'Plumbing', note: 'Leaks, borehole pumps, bathroom fittings' },
+  { name: 'Electrical', note: 'Wiring, inverters, prepaid meters, faults' },
+  { name: 'Makeup & Hair', note: 'Bridal, owambe glam, braids, wigs' },
+  { name: 'Carpentry', note: 'Furniture, doors, roofing woodwork' },
+  { name: 'Car Repair', note: 'Mechanics, panel beating, diagnostics' },
+  { name: 'Cleaning', note: 'Homes, offices, post-construction' },
+  { name: 'AC Repair', note: 'Servicing, gas refill, installation' },
+  { name: 'Photography', note: 'Events, portraits, product shoots' },
+  { name: 'Graphic Design', note: 'Logos, flyers, social content' },
+  { name: 'Tutoring', note: 'WAEC, JAMB, home lessons' },
+  { name: 'Event Planning', note: 'Decor, ushers, coordination' },
+  { name: 'Delivery', note: 'Dispatch riders, errands, moving' },
 ];
 
-const HOW_IT_WORKS_CLIENT = [
-  { step: '01', title: 'Post Your Job', desc: 'Describe what you need, set your budget, and pick your location in Port Harcourt.' },
-  { step: '02', title: 'Receive Applications', desc: 'Skilled providers apply with cover letters and proposed rates. View their full profiles.' },
-  { step: '03', title: 'Chat & Hire', desc: 'Message applicants directly, accept the best one, and get your job done.' },
+const AREAS = [
+  'GRA Phase 2', 'Rumuola', 'Trans-Amadi', 'D-Line', 'Eliozu', 'Rumuokoro',
+  'Woji', 'Ada George', 'Peter Odili', 'Rumuibekwe', 'Old GRA', 'Choba',
+  'Elekahia', 'Rumuigbo', 'Mile 3', 'Borokiri',
 ];
 
-const HOW_IT_WORKS_PROVIDER = [
-  { step: '01', title: 'Build Your Profile', desc: 'Add your skills, bio, and location so clients can find and trust you.' },
-  { step: '02', title: 'Browse & Apply', desc: 'Find jobs in your area, write a strong cover letter, and propose your rate.' },
-  { step: '03', title: 'Get Hired & Earn', desc: 'Chat with clients, complete the work, earn money, and grow your reputation.' },
-];
+const STEPS = {
+  client: [
+    { title: 'Describe the job', desc: 'What needs doing, roughly what you can pay, and which part of town you’re in. Takes about two minutes.' },
+    { title: 'Compare who applies', desc: 'Providers send a short note and their rate. Open their profile, see past work and ratings.' },
+    { title: 'Chat, then hire', desc: 'Ask your questions in the app, agree on the details, and pick the person you trust.' },
+  ],
+  provider: [
+    { title: 'Set up your profile', desc: 'Your trade, your area, a few photos of past work. This is your shopfront — make it honest.' },
+    { title: 'Apply to nearby jobs', desc: 'Browse jobs close to you. Write a short, specific note and name your price.' },
+    { title: 'Do good work, get known', desc: 'Every finished job adds to your rating. Good reviews bring the next client to you.' },
+  ],
+};
 
-function useInView(threshold = 0.15) {
+/* ────────────────────────────────────────────────────────────
+   Helpers
+   ──────────────────────────────────────────────────────────── */
+
+function useReveal(threshold = 0.12) {
   const ref = useRef(null);
-  const [inView, setInView] = useState(false);
+  const [shown, setShown] = useState(false);
   useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) setInView(true); },
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      ([e]) => { if (e.isIntersecting) { setShown(true); io.disconnect(); } },
       { threshold }
     );
-    if (ref.current) observer.observe(ref.current);
-    return () => observer.disconnect();
-  }, []);
-  return [ref, inView];
+    io.observe(el);
+    return () => io.disconnect();
+  }, [threshold]);
+  return [ref, shown];
 }
 
-function AnimatedCounter({ target, duration = 1500 }) {
-  const [count, setCount] = useState(0);
-  const [ref, inView] = useInView(0.5);
-  useEffect(() => {
-    if (!inView || target === 0) return;
-    let start = 0;
-    const step = target / (duration / 16);
-    const timer = setInterval(() => {
-      start += step;
-      if (start >= target) { setCount(target); clearInterval(timer); }
-      else setCount(Math.floor(start));
-    }, 16);
-    return () => clearInterval(timer);
-  }, [inView, target]);
-  return <span ref={ref}>{target === 0 ? '—' : count}</span>;
+const naira = (n) => (typeof n === 'number' ? `₦${n.toLocaleString('en-NG')}` : null);
+
+function budget(job) {
+  const lo = naira(job.budgetMin);
+  const hi = naira(job.budgetMax);
+  if (lo && hi && job.budgetMin !== job.budgetMax) return `${lo} – ${hi}`;
+  return lo || hi || 'Open';
 }
+
+function timeAgo(date) {
+  if (!date) return '';
+  const s = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  return new Date(date).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' });
+}
+
+/* ────────────────────────────────────────────────────────────
+   Page
+   ──────────────────────────────────────────────────────────── */
 
 export default function Home() {
   const { data: session } = useSession();
   const router = useRouter();
-  const [featuredJobs, setFeaturedJobs] = useState([]);
+  const [jobs, setJobs] = useState([]);
   const [jobsLoading, setJobsLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [query, setQuery] = useState('');
   const [stats, setStats] = useState({ jobs: 0, users: 0, categories: 12 });
-  const [heroVisible, setHeroVisible] = useState(false);
+  const [audience, setAudience] = useState('client');
+  const [mounted, setMounted] = useState(false);
 
-  const [categoriesRef, categoriesInView] = useInView();
-  const [howItWorksRef, howItWorksInView] = useInView();
-  const [jobsRef, jobsInView] = useInView();
-  const [whyRef, whyInView] = useInView();
+  const [catRef, catShown] = useReveal();
+  const [howRef, howShown] = useReveal();
+  const [boardRef, boardShown] = useReveal();
+  const [whyRef, whyShown] = useReveal();
 
   useEffect(() => {
-    const t = setTimeout(() => setHeroVisible(true), 100);
-    fetchFeaturedJobs();
-    fetchStats();
-    return () => clearTimeout(t);
+    setMounted(true);
+    (async () => {
+      try {
+        const res = await fetch('/api/jobs');
+        if (res.ok) {
+          const data = await res.json();
+          setJobs(Array.isArray(data) ? data.slice(0, 8) : []);
+        }
+      } catch (e) { console.error(e); }
+      finally { setJobsLoading(false); }
+    })();
+    (async () => {
+      try {
+        const res = await fetch('/api/stats');
+        if (res.ok) setStats(await res.json());
+      } catch (e) { console.error(e); }
+    })();
   }, []);
 
-  const fetchFeaturedJobs = async () => {
-    try {
-      const res = await fetch('/api/jobs');
-      if (!res.ok) return;
-      const data = await res.json();
-      setFeaturedJobs(Array.isArray(data) ? data.slice(0, 6) : []);
-    } catch (e) { console.error(e); }
-    finally { setJobsLoading(false); }
-  };
-
-  const fetchStats = async () => {
-    try {
-      const res = await fetch('/api/stats');
-      if (!res.ok) return;
-      const data = await res.json();
-      setStats(data);
-    } catch (e) { console.error(e); }
-  };
-
-  const handleSearch = (e) => {
+  const onSearch = (e) => {
     e.preventDefault();
-    router.push(searchQuery.trim()
-      ? `/browse?search=${encodeURIComponent(searchQuery.trim())}`
-      : '/browse'
-    );
+    const q = query.trim();
+    router.push(q ? `/browse?search=${encodeURIComponent(q)}` : '/browse');
   };
+
+  const isClient = session?.user?.role === 'client';
+  const primaryHref = !session ? '/signup' : isClient ? '/post-job' : '/browse';
+  const primaryLabel = !session ? 'Post a job' : isClient ? 'Post a job' : 'Find work';
 
   return (
-    <div className="min-h-screen overflow-x-hidden">
+    <div className="hg min-h-screen overflow-x-hidden bg-[#080f0a] text-[#e9efe9] antialiased">
       <style>{`
-        @keyframes fadeUp { from { opacity:0; transform:translateY(24px); } to { opacity:1; transform:translateY(0); } }
-        @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
-        @keyframes slideRight { from { opacity:0; transform:translateX(-30px); } to { opacity:1; transform:translateX(0); } }
-        @keyframes slideLeft { from { opacity:0; transform:translateX(30px); } to { opacity:1; transform:translateX(0); } }
-        @keyframes scaleIn { from { opacity:0; transform:scale(0.93); } to { opacity:1; transform:scale(1); } }
-        @keyframes float { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-12px); } }
-        @keyframes drift { 0%,100% { transform:translate(0,0) scale(1); } 33% { transform:translate(30px,-20px) scale(1.05); } 66% { transform:translate(-20px,15px) scale(0.97); } }
-        .animate-fade-up { animation: fadeUp 0.65s cubic-bezier(.22,1,.36,1) forwards; }
-        .animate-fade-in { animation: fadeIn 0.65s ease forwards; }
-        .animate-slide-right { animation: slideRight 0.65s cubic-bezier(.22,1,.36,1) forwards; }
-        .animate-slide-left { animation: slideLeft 0.65s cubic-bezier(.22,1,.36,1) forwards; }
-        .animate-scale-in { animation: scaleIn 0.5s cubic-bezier(.22,1,.36,1) forwards; }
-        .animate-float { animation: float 4s ease-in-out infinite; }
-        .animate-drift { animation: drift 10s ease-in-out infinite; }
-        .opacity-0 { opacity: 0; }
-        .delay-100 { animation-delay: 0.1s; } .delay-200 { animation-delay: 0.2s; }
-        .delay-300 { animation-delay: 0.3s; } .delay-400 { animation-delay: 0.4s; }
-        .delay-500 { animation-delay: 0.5s; } .delay-600 { animation-delay: 0.6s; }
-        .delay-700 { animation-delay: 0.7s; } .delay-800 { animation-delay: 0.8s; }
+        .hg { font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif; }
+        .serif { font-family: var(--font-serif), Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+        .mono { font-family: var(--font-mono), ui-monospace, monospace; }
+        .rise { opacity: 0; transform: translateY(14px); transition: opacity .8s cubic-bezier(.2,.7,.2,1), transform .8s cubic-bezier(.2,.7,.2,1); }
+        .rise.on { opacity: 1; transform: none; }
+        @keyframes ticker { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+        .ticker { animation: ticker 60s linear infinite; }
+        .ticker:hover { animation-play-state: paused; }
+        @media (prefers-reduced-motion: reduce) {
+          .rise { opacity: 1; transform: none; transition: none; }
+          .ticker { animation: none; }
+        }
       `}</style>
 
-      {/* ─── HERO ─── */}
-      <section className="relative min-h-[92vh] flex flex-col bg-[#080f0a] text-white overflow-hidden">
-
-        {/* Background layers */}
-        <div className="absolute inset-0 pointer-events-none">
-          {/* Noise texture */}
-          <div className="absolute inset-0 opacity-[0.035]" style={{
-            backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
-            backgroundSize: '200px 200px',
-          }} />
-          {/* Glow orbs */}
-          <div className="absolute top-[-15%] left-[-5%] w-[600px] h-[600px] rounded-full animate-drift"
-            style={{ background: 'radial-gradient(circle, rgba(22,163,74,0.18) 0%, transparent 70%)' }} />
-          <div className="absolute bottom-[-20%] right-[-10%] w-[700px] h-[700px] rounded-full animate-drift"
-            style={{ background: 'radial-gradient(circle, rgba(16,185,129,0.12) 0%, transparent 70%)', animationDelay: '3s' }} />
-          <div className="absolute top-[35%] right-[25%] w-[300px] h-[300px] rounded-full animate-float"
-            style={{ background: 'radial-gradient(circle, rgba(74,222,128,0.08) 0%, transparent 70%)', animationDelay: '1.5s' }} />
-          {/* Subtle grid */}
-          <div className="absolute inset-0 opacity-[0.04]" style={{
-            backgroundImage: 'linear-gradient(rgba(255,255,255,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.8) 1px, transparent 1px)',
-            backgroundSize: '72px 72px',
-          }} />
-          {/* Bottom fade */}
-          <div className="absolute bottom-0 left-0 right-0 h-40"
-            style={{ background: 'linear-gradient(to bottom, transparent, #080f0a)' }} />
-        </div>
-
-        {/* Top bar — logo + auth */}
-        <div className={`relative z-10 flex items-center justify-between px-5 pt-5 pb-2 ${heroVisible ? 'animate-fade-in' : 'opacity-0'}`}>
-          <Link href="/" className="text-2xl font-bold tracking-tight">
-            <span className="text-green-400">100</span><span className="text-white">Gigs</span>
+      {/* ─── HEADER ─── */}
+      <header className="relative z-20 border-b border-white/[0.07]">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-5 md:px-8">
+          <Link href="/" className="text-[1.35rem] font-semibold tracking-tight">
+            <span className="text-green-400">100</span>Gigs
           </Link>
-          {!session && (
-            <div className="flex items-center gap-2">
-              <Link href="/login"
-                className="text-sm px-4 py-2 rounded-xl text-white/60 hover:text-white transition font-medium">
-                Log In
-              </Link>
-              <Link href="/signup"
-                className="text-sm px-4 py-2 rounded-xl bg-green-500 hover:bg-green-400 text-white transition font-semibold shadow-lg shadow-green-900/40">
-                Sign Up
+          <nav className="hidden items-center gap-8 text-[13px] text-white/55 md:flex">
+            <Link href="/browse" className="transition hover:text-white">Browse jobs</Link>
+            <a href="#how" className="transition hover:text-white">How it works</a>
+            <a href="#trades" className="transition hover:text-white">Trades</a>
+          </nav>
+          {!session ? (
+            <div className="flex items-center gap-1 text-[13px]">
+              <Link href="/login" className="px-3 py-2 text-white/60 transition hover:text-white">Log in</Link>
+              <Link href="/signup" className="rounded-full bg-green-400 px-4 py-2 font-medium text-[#080f0a] transition hover:bg-green-300">
+                Sign up
               </Link>
             </div>
+          ) : (
+            <Link href={primaryHref} className="rounded-full border border-white/15 px-4 py-2 text-[13px] transition hover:border-green-400 hover:text-green-400">
+              {primaryLabel}
+            </Link>
           )}
         </div>
+      </header>
 
-        {/* Hero content */}
-        <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-5 pb-16 pt-8 text-center">
+      {/* ─── HERO ─── */}
+      <section className="relative">
+        <div className="mx-auto grid max-w-7xl gap-14 px-5 pb-20 pt-14 md:px-8 md:pt-20 lg:grid-cols-[1.25fr_1fr] lg:gap-20 lg:pb-28">
+          {/* Left */}
+          <div>
+            <p className={`mono mb-8 text-[11px] uppercase tracking-[0.18em] text-white/40 rise ${mounted ? 'on' : ''}`}>
+              Port Harcourt <span className="text-green-400">/</span> Rivers State <span className="text-green-400">/</span> NG
+            </p>
 
-          {/* Pill badge */}
-          <div className={`inline-flex items-center gap-2 mb-7 px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide border ${heroVisible ? 'animate-fade-up' : 'opacity-0'}`}
-            style={{ background: 'rgba(22,163,74,0.12)', borderColor: 'rgba(74,222,128,0.25)', color: '#4ade80' }}>
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-400" />
-            </span>
-            Port Harcourt · Rivers State
+            <h1 className={`serif text-[3.4rem] leading-[0.95] sm:text-7xl lg:text-[6.25rem] rise ${mounted ? 'on' : ''}`}
+              style={{ transitionDelay: '80ms' }}>
+              Skilled hands,
+              <br />
+              <em className="text-green-400">right around</em>
+              <br />
+              the corner.
+            </h1>
+
+            <p className={`mt-8 max-w-md text-[15px] leading-relaxed text-white/55 rise ${mounted ? 'on' : ''}`}
+              style={{ transitionDelay: '160ms' }}>
+              Post a job, compare offers from local providers, and hire someone from your own side of town.
+              No middlemen taking a cut of the conversation.
+            </p>
+
+            <form onSubmit={onSearch}
+              className={`mt-10 max-w-lg rise ${mounted ? 'on' : ''}`}
+              style={{ transitionDelay: '240ms' }}>
+              <label htmlFor="q" className="mono mb-3 block text-[11px] uppercase tracking-[0.18em] text-white/35">
+                What do you need done?
+              </label>
+              <div className="group flex items-center border-b border-white/20 pb-3 transition-colors focus-within:border-green-400">
+                <Search size={18} className="mr-3 shrink-0 text-white/35 group-focus-within:text-green-400" />
+                <input
+                  id="q"
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Fix my inverter, bridal makeup Saturday…"
+                  className="min-w-0 flex-1 bg-transparent text-lg text-white outline-none placeholder:text-white/25"
+                />
+                <button type="submit" aria-label="Search"
+                  className="ml-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-400 text-[#080f0a] transition hover:bg-green-300 active:scale-95">
+                  <ArrowRight size={18} />
+                </button>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-[13px] text-white/40">
+                <span className="text-white/25">Popular:</span>
+                {['Plumbing', 'Electrical', 'AC Repair', 'Makeup & Hair'].map((t) => (
+                  <button key={t} type="button"
+                    onClick={() => router.push(`/browse?category=${encodeURIComponent(t)}`)}
+                    className="underline decoration-white/15 underline-offset-4 transition hover:text-green-400 hover:decoration-green-400">
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </form>
+
+            {(stats.jobs > 0 || stats.users > 0) && (
+              <dl className={`mt-14 flex gap-10 rise ${mounted ? 'on' : ''}`} style={{ transitionDelay: '320ms' }}>
+                {stats.jobs > 0 && (
+                  <div>
+                    <dt className="text-[12px] text-white/35">Jobs posted</dt>
+                    <dd className="mono mt-1 text-2xl text-white">{stats.jobs.toLocaleString()}</dd>
+                  </div>
+                )}
+                {stats.users > 0 && (
+                  <div>
+                    <dt className="text-[12px] text-white/35">Members</dt>
+                    <dd className="mono mt-1 text-2xl text-white">{stats.users.toLocaleString()}</dd>
+                  </div>
+                )}
+                <div>
+                  <dt className="text-[12px] text-white/35">Trades</dt>
+                  <dd className="mono mt-1 text-2xl text-white">{stats.categories}</dd>
+                </div>
+              </dl>
+            )}
           </div>
 
-          {/* Headline */}
-          <h1 className={`text-[2.75rem] sm:text-6xl md:text-7xl font-bold leading-[1.05] tracking-tight mb-5 max-w-3xl ${heroVisible ? 'animate-fade-up delay-100' : 'opacity-0'}`}>
-            Hire Skilled Hands
-            <br />
-            <span style={{
-              background: 'linear-gradient(135deg, #4ade80 0%, #34d399 50%, #6ee7b7 100%)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-            }}>
-              in Your City.
-            </span>
-          </h1>
+          {/* Right — live board */}
+          <aside className={`self-end rise ${mounted ? 'on' : ''}`} style={{ transitionDelay: '200ms' }}>
+            <div className="border border-white/10 bg-[#0b150e]">
+              <div className="flex items-center justify-between border-b border-white/10 px-5 py-3.5">
+                <p className="mono text-[11px] uppercase tracking-[0.18em] text-white/50">Posted recently</p>
+                <span className="mono flex items-center gap-2 text-[11px] text-green-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-green-400" /> live
+                </span>
+              </div>
 
-          {/* Subheadline */}
-          <p className={`text-base sm:text-lg text-white/50 max-w-md mb-10 leading-relaxed ${heroVisible ? 'animate-fade-up delay-200' : 'opacity-0'}`}>
-            The go-to app for local gigs in PH — no middlemen, no stress, just results.
-          </p>
+              {jobsLoading ? (
+                <ul>
+                  {[0, 1, 2, 3].map((i) => (
+                    <li key={i} className="border-b border-white/[0.06] px-5 py-4 last:border-0">
+                      <div className="mb-2 h-3 w-1/4 animate-pulse bg-white/[0.06]" />
+                      <div className="h-4 w-3/4 animate-pulse bg-white/[0.08]" />
+                    </li>
+                  ))}
+                </ul>
+              ) : jobs.length === 0 ? (
+                <div className="px-5 py-12">
+                  <p className="serif text-3xl leading-tight text-white/90">Quiet morning.</p>
+                  <p className="mt-2 text-sm text-white/45">No jobs on the board yet. Yours could be the first one people see today.</p>
+                  <Link href="/post-job" className="mt-6 inline-flex items-center gap-2 text-sm text-green-400 hover:underline underline-offset-4">
+                    Post a job <ArrowRight size={14} />
+                  </Link>
+                </div>
+              ) : (
+                <ul>
+                  {jobs.slice(0, 4).map((job) => (
+                    <li key={job._id} className="border-b border-white/[0.06] last:border-0">
+                      <Link href={`/jobs/${job._id}`} className="group block px-5 py-4 transition-colors hover:bg-white/[0.025]">
+                        <div className="mono mb-1.5 flex items-center justify-between text-[11px] text-white/35">
+                          <span>{job.category}{job.location ? ` · ${job.location}` : ''}</span>
+                          <span>{timeAgo(job.createdAt)}</span>
+                        </div>
+                        <div className="flex items-start justify-between gap-4">
+                          <p className="line-clamp-1 text-[15px] text-white/90 transition-colors group-hover:text-green-400">{job.title}</p>
+                          <p className="mono shrink-0 text-[13px] text-green-400/90">{budget(job)}</p>
+                        </div>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
 
-          {/* Search */}
-          <form onSubmit={handleSearch}
-            className={`w-full max-w-lg mb-8 ${heroVisible ? 'animate-fade-up delay-300' : 'opacity-0'}`}>
-            <div className="flex items-center gap-2 p-1.5 rounded-2xl"
-              style={{
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                backdropFilter: 'blur(12px)',
-              }}>
-              <Search size={17} className="ml-3 text-white/30 shrink-0" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder="plumbing, makeup, AC repair…"
-                className="flex-1 bg-transparent text-white placeholder-white/25 outline-none text-sm py-2.5 min-w-0"
-              />
-              <button type="submit"
-                className="bg-green-500 hover:bg-green-400 active:scale-95 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition shadow-lg shadow-green-900/40 shrink-0">
-                Search
-              </button>
+              <Link href="/browse"
+                className="flex items-center justify-between border-t border-white/10 px-5 py-3.5 text-[13px] text-white/60 transition hover:bg-green-400 hover:text-[#080f0a]">
+                See every open job <ArrowUpRight size={15} />
+              </Link>
             </div>
-          </form>
-
-          {/* Quick category pills */}
-          <div className={`flex flex-wrap justify-center gap-2 mb-12 ${heroVisible ? 'animate-fade-up delay-400' : 'opacity-0'}`}>
-            {['Plumbing', 'Electrical', 'Makeup & Hair', 'Car Repair', 'AC Repair'].map(term => (
-              <button key={term} onClick={() => router.push(`/browse?category=${encodeURIComponent(term)}`)}
-                className="text-xs px-3.5 py-1.5 rounded-full font-medium transition"
-                style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.55)' }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(74,222,128,0.12)'; e.currentTarget.style.color = '#4ade80'; e.currentTarget.style.borderColor = 'rgba(74,222,128,0.3)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.55)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}>
-                {term}
-              </button>
-            ))}
-          </div>
-
-          {/* CTAs */}
-          <div className={`flex flex-col sm:flex-row gap-3 ${heroVisible ? 'animate-fade-up delay-500' : 'opacity-0'}`}>
-            <Link href="/browse"
-              className="group flex items-center justify-center gap-2 bg-green-500 hover:bg-green-400 text-white font-semibold px-7 py-3.5 rounded-2xl transition shadow-xl shadow-green-900/40 text-sm">
-              <Briefcase size={17} /> Browse Jobs
-              <ArrowRight size={15} className="group-hover:translate-x-0.5 transition-transform" />
-            </Link>
-            {!session && (
-              <Link href="/signup"
-                className="group flex items-center justify-center gap-2 font-semibold px-7 py-3.5 rounded-2xl transition text-sm"
-                style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.8)' }}>
-                Get Started Free
-                <ArrowRight size={15} className="group-hover:translate-x-0.5 transition-transform" />
-              </Link>
-            )}
-            {session?.user?.role === 'client' && (
-              <Link href="/post-job"
-                className="group flex items-center justify-center gap-2 font-semibold px-7 py-3.5 rounded-2xl transition text-sm"
-                style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.8)' }}>
-                Post a Job
-                <ArrowRight size={15} className="group-hover:translate-x-0.5 transition-transform" />
-              </Link>
-            )}
-          </div>
+          </aside>
         </div>
 
-        {/* Stats strip at bottom of hero */}
-        <div className={`relative z-10 border-t mx-5 mb-6 pt-6 grid grid-cols-3 gap-4 text-center ${heroVisible ? 'animate-fade-up delay-600' : 'opacity-0'}`}
-          style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
-          {[
-            { value: stats.jobs, label: 'Jobs Posted', suffix: '+' },
-            { value: stats.users, label: 'Members', suffix: '+' },
-            { value: stats.categories, label: 'Categories', suffix: '+' },
-          ].map((s, i) => (
-            <div key={i}>
-              <p className="text-2xl font-bold text-green-400">
-                <AnimatedCounter target={s.value} />{s.value > 0 && s.suffix}
-              </p>
-              <p className="text-[11px] text-white/35 mt-0.5 font-medium">{s.label}</p>
-            </div>
-          ))}
+        {/* Neighbourhood ticker */}
+        <div className="overflow-hidden border-y border-white/[0.07] py-4">
+          <div className="ticker flex w-max whitespace-nowrap">
+            {[...AREAS, ...AREAS].map((a, i) => (
+              <span key={i} className="serif flex items-center text-2xl italic text-white/30">
+                {a}
+                <span className="mx-8 text-[10px] not-italic text-green-400/60">●</span>
+              </span>
+            ))}
+          </div>
         </div>
       </section>
 
-      {/* ─── CATEGORIES ─── */}
-      <section className="py-24 bg-gray-50 dark:bg-gray-950" ref={categoriesRef}>
-        <div className="max-w-6xl mx-auto px-4">
-          <div className={`text-center mb-14 ${categoriesInView ? 'animate-fade-up' : 'opacity-0'}`}>
-            <p className="text-green-600 font-semibold text-sm uppercase tracking-widest mb-3">What we offer</p>
-            <h2 className="text-4xl md:text-5xl font-bold mb-4">Popular Services in PH</h2>
-            <p className="text-gray-500 dark:text-gray-400 max-w-xl mx-auto">
-              From plumbing to photography — every service you need, right here in Port Harcourt.
-            </p>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-            {CATEGORIES.map((cat, i) => (
-              <Link key={cat.name} href={`/browse?category=${encodeURIComponent(cat.name)}`}
-                className={`${cat.color} p-5 rounded-2xl border border-gray-100 dark:border-gray-800 hover:shadow-lg transition-all duration-300 hover:-translate-y-2 hover:border-green-200 dark:hover:border-green-800 group cursor-pointer ${categoriesInView ? 'animate-scale-in' : 'opacity-0'}`}
-                style={{ animationDelay: `${i * 0.05}s` }}>
-                <div className={`${cat.iconColor} mb-3 group-hover:scale-110 transition-transform duration-300`}>{cat.icon}</div>
-                <p className="font-semibold text-sm group-hover:text-green-600 transition-colors">{cat.name}</p>
-              </Link>
-            ))}
-          </div>
+      {/* ─── TRADES ─── */}
+      <section id="trades" ref={catRef} className="mx-auto max-w-7xl px-5 py-24 md:px-8 md:py-32">
+        <div className={`mb-14 grid gap-6 md:grid-cols-[1fr_1.4fr] md:items-end rise ${catShown ? 'on' : ''}`}>
+          <h2 className="serif text-5xl leading-none md:text-6xl">
+            Twelve trades,<br /><em className="text-green-400">one city.</em>
+          </h2>
+          <p className="max-w-md text-[15px] leading-relaxed text-white/50 md:justify-self-end">
+            The jobs people in PH actually need doing — from the light that keeps tripping to the makeup for Saturday’s wedding.
+          </p>
         </div>
+
+        <ol className="grid border-t border-white/10 md:grid-cols-2 md:gap-x-12">
+          {CATEGORIES.map((c, i) => (
+            <li key={c.name} className={`rise ${catShown ? 'on' : ''}`} style={{ transitionDelay: `${i * 35}ms` }}>
+              <Link href={`/browse?category=${encodeURIComponent(c.name)}`}
+                className="group flex items-baseline gap-5 border-b border-white/10 py-5 transition-colors">
+                <span className="mono w-6 shrink-0 text-[11px] text-white/25">{String(i + 1).padStart(2, '0')}</span>
+                <span className="flex-1">
+                  <span className="block text-xl text-white transition-colors group-hover:text-green-400 md:text-[1.4rem]">{c.name}</span>
+                  <span className="mt-1 block text-[13px] text-white/40">{c.note}</span>
+                </span>
+                <ArrowUpRight size={18}
+                  className="shrink-0 -translate-x-1 text-white/20 transition group-hover:translate-x-0 group-hover:text-green-400" />
+              </Link>
+            </li>
+          ))}
+        </ol>
       </section>
 
       {/* ─── HOW IT WORKS ─── */}
-      <section className="py-24 bg-white dark:bg-gray-900" ref={howItWorksRef}>
-        <div className="max-w-6xl mx-auto px-4">
-          <div className={`text-center mb-16 ${howItWorksInView ? 'animate-fade-up' : 'opacity-0'}`}>
-            <p className="text-green-600 font-semibold text-sm uppercase tracking-widest mb-3">Simple process</p>
-            <h2 className="text-4xl md:text-5xl font-bold mb-4">How 100Gigs Works</h2>
-            <p className="text-gray-500 dark:text-gray-400 max-w-xl mx-auto">
-              Get started in minutes — whether you need work done or want to earn money.
-            </p>
-          </div>
-          <div className="grid md:grid-cols-2 gap-8">
-            <div className={`bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/10 rounded-3xl p-8 border border-green-100 dark:border-green-900/30 ${howItWorksInView ? 'animate-slide-right' : 'opacity-0'}`}>
-              <div className="flex items-center gap-3 mb-8">
-                <div className="w-11 h-11 bg-green-600 rounded-xl flex items-center justify-center shadow-lg shadow-green-200 dark:shadow-none">
-                  <Briefcase size={20} className="text-white" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold">For Clients</h3>
-                  <p className="text-green-600 text-xs">Post jobs and hire locally</p>
-                </div>
-              </div>
-              <div className="space-y-5">
-                {HOW_IT_WORKS_CLIENT.map((item, i) => (
-                  <div key={i} className="flex gap-4 group">
-                    <div className="flex-shrink-0 w-11 h-11 bg-green-600 rounded-xl flex items-center justify-center font-bold text-white text-sm shadow-md group-hover:scale-110 transition-transform">{item.step}</div>
-                    <div>
-                      <h4 className="font-semibold mb-1">{item.title}</h4>
-                      <p className="text-gray-500 dark:text-gray-400 text-sm leading-relaxed">{item.desc}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <Link href={session ? '/post-job' : '/signup'}
-                className="mt-8 inline-flex items-center gap-2 bg-green-600 text-white px-6 py-3 rounded-xl hover:bg-green-700 transition font-medium group shadow-lg shadow-green-200 dark:shadow-none">
-                Post a Job <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
-              </Link>
-            </div>
-            <div className={`bg-gradient-to-br from-gray-50 to-slate-50 dark:from-gray-800/50 dark:to-slate-800/30 rounded-3xl p-8 border border-gray-100 dark:border-gray-700 ${howItWorksInView ? 'animate-slide-left delay-200' : 'opacity-0'}`}>
-              <div className="flex items-center gap-3 mb-8">
-                <div className="w-11 h-11 bg-gray-900 dark:bg-white rounded-xl flex items-center justify-center shadow-lg">
-                  <Users size={20} className="text-white dark:text-gray-900" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold">For Providers</h3>
-                  <p className="text-gray-500 text-xs">Find work and earn money</p>
-                </div>
-              </div>
-              <div className="space-y-5">
-                {HOW_IT_WORKS_PROVIDER.map((item, i) => (
-                  <div key={i} className="flex gap-4 group">
-                    <div className="flex-shrink-0 w-11 h-11 bg-gray-900 dark:bg-white rounded-xl flex items-center justify-center font-bold text-white dark:text-gray-900 text-sm shadow-md group-hover:scale-110 transition-transform">{item.step}</div>
-                    <div>
-                      <h4 className="font-semibold mb-1">{item.title}</h4>
-                      <p className="text-gray-500 dark:text-gray-400 text-sm leading-relaxed">{item.desc}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <Link href={session ? '/browse' : '/signup'}
-                className="mt-8 inline-flex items-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 px-6 py-3 rounded-xl hover:opacity-90 transition font-medium group shadow-lg">
-                Find Work <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
-              </Link>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ─── FEATURED JOBS ─── */}
-      <section className="py-24 bg-gray-50 dark:bg-gray-950" ref={jobsRef}>
-        <div className="max-w-6xl mx-auto px-4">
-          <div className={`flex justify-between items-end mb-14 ${jobsInView ? 'animate-fade-up' : 'opacity-0'}`}>
-            <div>
-              <p className="text-green-600 font-semibold text-sm uppercase tracking-widest mb-3">Fresh opportunities</p>
-              <h2 className="text-4xl md:text-5xl font-bold mb-2">Latest Jobs</h2>
-              <p className="text-gray-500 dark:text-gray-400">Posted in Port Harcourt — updated in real time</p>
-            </div>
-            <Link href="/browse" className="hidden md:flex items-center gap-2 text-green-600 font-medium hover:underline group">
-              View all <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
-            </Link>
-          </div>
-          {jobsLoading ? (
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[1,2,3,4,5,6].map(i => (
-                <div key={i} className="bg-white dark:bg-gray-900 p-6 rounded-2xl animate-pulse">
-                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/3 mb-4" />
-                  <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded w-3/4 mb-3" />
-                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-full mb-2" />
-                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-2/3 mb-6" />
-                  <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2" />
-                </div>
+      <section id="how" ref={howRef} className="border-t border-white/[0.07] bg-[#0b150e]">
+        <div className="mx-auto max-w-7xl px-5 py-24 md:px-8 md:py-32">
+          <div className={`mb-16 flex flex-col gap-8 md:flex-row md:items-end md:justify-between rise ${howShown ? 'on' : ''}`}>
+            <h2 className="serif text-5xl leading-none md:text-6xl">How it works</h2>
+            <div role="tablist" className="inline-flex self-start rounded-full border border-white/15 p-1 text-[13px]">
+              {[['client', 'I need help'], ['provider', 'I offer a service']].map(([key, label]) => (
+                <button key={key} role="tab" aria-selected={audience === key}
+                  onClick={() => setAudience(key)}
+                  className={`rounded-full px-4 py-2 transition ${audience === key ? 'bg-green-400 text-[#080f0a]' : 'text-white/55 hover:text-white'}`}>
+                  {label}
+                </button>
               ))}
             </div>
-          ) : featuredJobs.length === 0 ? (
-            <div className="text-center py-20 bg-white dark:bg-gray-900 rounded-3xl border border-gray-100 dark:border-gray-800">
-              <Briefcase size={48} className="mx-auto text-gray-300 mb-4" />
-              <p className="text-gray-500 mb-2 font-medium">No jobs posted yet</p>
-              <p className="text-sm text-gray-400 mb-6">Be the first to post a job!</p>
-              <Link href="/post-job" className="inline-block bg-green-600 text-white px-6 py-3 rounded-xl hover:bg-green-700 transition">Post a Job</Link>
-            </div>
-          ) : (
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {featuredJobs.map((job, i) => (
-                <Link key={job._id} href={`/jobs/${job._id}`}
-                  className={`bg-white dark:bg-gray-900 p-6 rounded-2xl border border-gray-100 dark:border-gray-800 hover:shadow-xl hover:-translate-y-2 transition-all duration-300 group ${jobsInView ? 'animate-scale-in' : 'opacity-0'}`}
-                  style={{ animationDelay: `${i * 0.08}s` }}>
-                  <div className="flex justify-between items-start mb-4">
-                    <span className="text-xs bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300 px-3 py-1 rounded-full font-medium">{job.category}</span>
-                    <span className="text-xs text-gray-400">{new Date(job.createdAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' })}</span>
-                  </div>
-                  <h3 className="font-bold text-lg mb-2 group-hover:text-green-600 transition-colors line-clamp-2 leading-snug">{job.title}</h3>
-                  <p className="text-gray-500 dark:text-gray-400 text-sm mb-5 line-clamp-2 leading-relaxed">{job.description}</p>
-                  <div className="flex items-center justify-between pt-4 border-t dark:border-gray-800">
-                    <p className="text-green-600 font-bold">₦{job.budgetMin?.toLocaleString()} — ₦{job.budgetMax?.toLocaleString()}</p>
-                    <div className="flex items-center gap-1 text-xs text-gray-400"><MapPin size={11} />{job.location}</div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
-          <div className="text-center mt-10 md:hidden">
-            <Link href="/browse" className="inline-flex items-center gap-2 text-green-600 font-medium">View all jobs <ArrowRight size={16} /></Link>
           </div>
-        </div>
-      </section>
 
-      {/* ─── WHY 100GIGS ─── */}
-      <section className="py-24 bg-white dark:bg-gray-900" ref={whyRef}>
-        <div className="max-w-6xl mx-auto px-4">
-          <div className={`text-center mb-14 ${whyInView ? 'animate-fade-up' : 'opacity-0'}`}>
-            <p className="text-green-600 font-semibold text-sm uppercase tracking-widest mb-3">Our advantage</p>
-            <h2 className="text-4xl md:text-5xl font-bold mb-4">Why Choose 100Gigs?</h2>
-            <p className="text-gray-500 dark:text-gray-400 max-w-xl mx-auto">
-              Built specifically for Port Harcourt — not a copy-paste generic platform.
-            </p>
-          </div>
-          <div className="grid md:grid-cols-3 gap-8">
-            {[
-              { icon: <MapPin size={28} className="text-green-600" />, title: 'Hyper Local', desc: 'Every job and provider is in Port Harcourt. No wasted time on out-of-town results.', bg: 'bg-green-50 dark:bg-green-900/20', border: 'border-green-100 dark:border-green-900/30', delay: '0s' },
-              { icon: <Shield size={28} className="text-blue-600" />, title: 'Trusted Community', desc: 'Real profiles, real ratings, real people from PH. Build your reputation over time.', bg: 'bg-blue-50 dark:bg-blue-900/20', border: 'border-blue-100 dark:border-blue-900/30', delay: '0.15s' },
-              { icon: <Zap size={28} className="text-yellow-600" />, title: 'Fast & Simple', desc: 'Post a job in 2 minutes. Apply in seconds. No complicated process — just results.', bg: 'bg-yellow-50 dark:bg-yellow-900/20', border: 'border-yellow-100 dark:border-yellow-900/30', delay: '0.3s' },
-            ].map((item, i) => (
-              <div key={i} className={`${item.bg} p-8 rounded-3xl border ${item.border} hover:shadow-lg transition-all duration-300 hover:-translate-y-1 ${whyInView ? 'animate-scale-in' : 'opacity-0'}`} style={{ animationDelay: item.delay }}>
-                <div className="w-14 h-14 bg-white dark:bg-gray-900 rounded-2xl flex items-center justify-center mb-6 shadow-md">{item.icon}</div>
-                <h3 className="text-xl font-bold mb-3">{item.title}</h3>
-                <p className="text-gray-500 dark:text-gray-400 leading-relaxed text-sm">{item.desc}</p>
+          <div className="grid border-t border-white/10 md:grid-cols-3">
+            {STEPS[audience].map((s, i) => (
+              <div key={`${audience}-${i}`}
+                className={`border-b border-white/10 py-10 md:border-b-0 md:px-8 md:first:pl-0 md:[&:not(:first-child)]:border-l rise ${howShown ? 'on' : ''}`}
+                style={{ transitionDelay: `${i * 90}ms` }}>
+                <p className="serif mb-8 text-7xl leading-none text-green-400">{i + 1}</p>
+                <h3 className="mb-3 text-lg font-medium text-white">{s.title}</h3>
+                <p className="max-w-xs text-[14px] leading-relaxed text-white/50">{s.desc}</p>
               </div>
             ))}
           </div>
+
+          <Link href={audience === 'client' ? (session ? '/post-job' : '/signup') : (session ? '/browse' : '/signup')}
+            className="group mt-12 inline-flex items-center gap-3 text-[15px] text-white">
+            <span className="border-b border-green-400 pb-0.5 transition group-hover:text-green-400">
+              {audience === 'client' ? 'Post your first job' : 'Start finding work'}
+            </span>
+            <ArrowRight size={16} className="text-green-400 transition-transform group-hover:translate-x-1" />
+          </Link>
         </div>
       </section>
+
+      {/* ─── JOB BOARD ─── */}
+      {jobs.length > 0 && (
+        <section ref={boardRef} className="mx-auto max-w-7xl px-5 py-24 md:px-8 md:py-32">
+          <div className={`mb-12 flex items-end justify-between gap-6 rise ${boardShown ? 'on' : ''}`}>
+            <div>
+              <p className="mono mb-4 text-[11px] uppercase tracking-[0.18em] text-white/35">The board</p>
+              <h2 className="serif text-5xl leading-none md:text-6xl">Open right now</h2>
+            </div>
+            <Link href="/browse" className="hidden items-center gap-2 text-[13px] text-white/55 transition hover:text-green-400 md:flex">
+              All jobs <ArrowUpRight size={15} />
+            </Link>
+          </div>
+
+          <div className="mono hidden grid-cols-[90px_150px_1fr_150px_170px] gap-6 border-b border-white/10 pb-3 text-[11px] uppercase tracking-[0.14em] text-white/30 md:grid">
+            <span>Posted</span><span>Trade</span><span>Job</span><span>Area</span><span className="text-right">Budget</span>
+          </div>
+
+          <ul>
+            {jobs.map((job, i) => (
+              <li key={job._id} className={`rise ${boardShown ? 'on' : ''}`} style={{ transitionDelay: `${i * 40}ms` }}>
+                <Link href={`/jobs/${job._id}`}
+                  className="group grid grid-cols-1 gap-1 border-b border-white/[0.07] py-5 transition-colors hover:bg-white/[0.02] md:grid-cols-[90px_150px_1fr_150px_170px] md:items-center md:gap-6">
+                  <span className="mono text-[12px] text-white/35">{timeAgo(job.createdAt)}</span>
+                  <span className="text-[13px] text-white/55">{job.category}</span>
+                  <span className="line-clamp-1 text-[16px] text-white transition-colors group-hover:text-green-400">{job.title}</span>
+                  <span className="text-[13px] text-white/45">{job.location}</span>
+                  <span className="mono text-[14px] text-green-400 md:text-right">{budget(job)}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+
+          <Link href="/browse" className="mt-8 inline-flex items-center gap-2 text-[13px] text-green-400 md:hidden">
+            All jobs <ArrowRight size={14} />
+          </Link>
+        </section>
+      )}
+
+      {/* ─── WHY ─── */}
+      <section ref={whyRef} className="border-t border-white/[0.07]">
+        <div className="mx-auto grid max-w-7xl gap-16 px-5 py-24 md:px-8 md:py-32 lg:grid-cols-[1.3fr_1fr]">
+          <p className={`serif text-4xl leading-[1.1] text-white md:text-[3.4rem] rise ${whyShown ? 'on' : ''}`}>
+            Most platforms are built for everywhere, so they work nowhere in particular.
+            <span className="text-green-400"> 100Gigs is built for Port Harcourt</span>
+            <span className="text-white/40"> — the traffic, the areas, the way people here actually find someone they trust.</span>
+          </p>
+
+          <dl className="self-end border-t border-white/10">
+            {[
+              ['Local by default', 'Every job and every provider is in PH. Nobody quoting you from Abuja.'],
+              ['Reputation that sticks', 'Ratings follow providers from job to job, so good work gets noticed.'],
+              ['Two minutes to post', 'No long forms. Say what you need and the offers come to you.'],
+            ].map(([t, d], i) => (
+              <div key={t} className={`border-b border-white/10 py-6 rise ${whyShown ? 'on' : ''}`} style={{ transitionDelay: `${120 + i * 90}ms` }}>
+                <dt className="mb-1.5 text-[15px] font-medium text-white">{t}</dt>
+                <dd className="text-[14px] leading-relaxed text-white/50">{d}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      </section>
+
+      {/* ─── CTA ─── */}
+      <section className="bg-green-400 text-[#080f0a]">
+        <div className="mx-auto flex max-w-7xl flex-col gap-10 px-5 py-20 md:flex-row md:items-end md:justify-between md:px-8 md:py-24">
+          <h2 className="serif text-5xl leading-[0.95] md:text-7xl">
+            Got something<br /><em>that needs doing?</em>
+          </h2>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <Link href={session ? '/post-job' : '/signup'}
+              className="group inline-flex items-center justify-center gap-2 rounded-full bg-[#080f0a] px-7 py-4 text-[14px] font-medium text-white transition hover:bg-black">
+              Post a job <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />
+            </Link>
+            <Link href="/browse"
+              className="inline-flex items-center justify-center rounded-full border border-[#080f0a]/30 px-7 py-4 text-[14px] font-medium transition hover:border-[#080f0a]">
+              I’m looking for work
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* ─── FOOTER ─── */}
+      <footer className="border-t border-white/[0.07]">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-5 py-10 text-[13px] text-white/35 md:flex-row md:items-center md:justify-between md:px-8">
+          <span className="text-base font-semibold text-white">
+            <span className="text-green-400">100</span>Gigs
+          </span>
+          <span className="mono text-[11px] uppercase tracking-[0.18em]">Made in Port Harcourt · {new Date().getFullYear()}</span>
+          <div className="flex gap-6">
+            <Link href="/browse" className="hover:text-white">Browse</Link>
+            <Link href="/signup" className="hover:text-white">Join</Link>
+            <Link href="/login" className="hover:text-white">Log in</Link>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

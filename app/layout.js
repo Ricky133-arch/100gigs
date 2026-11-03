@@ -1,4 +1,4 @@
-import { Inter } from 'next/font/google';
+import { Inter, Inter_Tight, Instrument_Serif, JetBrains_Mono } from 'next/font/google';
 import Providers from '@/components/providers';
 import ThemeProvider from '@/components/ThemeProvider';
 import Navbar from '@/components/Navbar';
@@ -8,7 +8,31 @@ import InstallBanner from '@/components/InstallBanner';
 import { Toaster } from 'sonner';
 import './globals.css';
 
+// Default body font for the rest of the app (unchanged)
 const inter = Inter({ subsets: ['latin'] });
+
+// Homepage fonts — exposed as CSS variables so any page can opt in
+const interTight = Inter_Tight({
+  subsets: ['latin'],
+  weight: ['400', '500', '600'],
+  variable: '--font-sans',
+  display: 'swap',
+});
+
+const instrumentSerif = Instrument_Serif({
+  subsets: ['latin'],
+  weight: '400',
+  style: ['normal', 'italic'],
+  variable: '--font-serif',
+  display: 'swap',
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500'],
+  variable: '--font-mono',
+  display: 'swap',
+});
 
 export const metadata = {
   title: '100Gigs - Port Harcourt Gig Marketplace',
@@ -31,7 +55,11 @@ export const viewport = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${interTight.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable}`}
+    >
       <body className={`${inter.className} bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100`}>
         <Providers>
           <ThemeProvider>
