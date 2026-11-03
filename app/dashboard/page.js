@@ -2,11 +2,71 @@
 import { useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import {
-  Briefcase, MessageCircle, Clock, Plus,
-  Users, CheckCircle, XCircle, MapPin, ArrowRight, Sparkles,
-  ShieldCheck, ShieldAlert
-} from 'lucide-react';
+import { ArrowRight, ArrowUpRight, Plus } from 'lucide-react';
+
+/* ── helpers ─────────────────────────────────────────────── */
+
+const naira = (n) => (typeof n === 'number' ? `₦${n.toLocaleString('en-NG')}` : null);
+
+function budget(job) {
+  const lo = naira(job?.budgetMin);
+  const hi = naira(job?.budgetMax);
+  if (lo && hi && job.budgetMin !== job.budgetMax) return `${lo} – ${hi}`;
+  return lo || hi || 'Open';
+}
+
+function timeAgo(date) {
+  if (!date) return '';
+  const s = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  return new Date(date).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' });
+}
+
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+const STATUS_STYLE = {
+  open: { dot: 'bg-green-400', text: 'text-green-400', label: 'Open' },
+  accepted: { dot: 'bg-green-400', text: 'text-green-400', label: 'Accepted' },
+  pending: { dot: 'bg-amber-300', text: 'text-amber-300', label: 'Pending' },
+  rejected: { dot: 'bg-red-400', text: 'text-red-400', label: 'Not selected' },
+};
+
+function Status({ value }) {
+  const s = STATUS_STYLE[value] || { dot: 'bg-white/30', text: 'text-white/40', label: value || '—' };
+  return (
+    <span className={`mono inline-flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] ${s.text}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
+      {s.label}
+    </span>
+  );
+}
+
+function RowSkeleton() {
+  return (
+    <ul>
+      {[0, 1, 2].map((i) => (
+        <li key={i} className="border-b border-white/[0.07] py-6">
+          <div className="mb-3 h-3 w-24 animate-pulse bg-white/[0.06]" />
+          <div className="mb-2 h-5 w-2/3 animate-pulse bg-white/[0.08]" />
+          <div className="h-3 w-1/3 animate-pulse bg-white/[0.05]" />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/* ── page ────────────────────────────────────────────────── */
 
 export default function Dashboard() {
   const { data: session, status } = useSession();
@@ -17,25 +77,31 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (session) fetchDashboardData();
-  }, [session]);
+  }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
       if (session.user.role === 'client' || session.user.role === 'admin') {
         const res = await fetch('/api/jobs/my-jobs');
-        if (!res.ok) { setMyJobs([]); return; }
-        const data = await res.json();
+        const data = res.ok ? await res.json() : [];
         setMyJobs(Array.isArray(data) ? data : []);
       } else {
-        const res = await fetch('/api/applications/my-applications');
-        if (!res.ok) { setMyApplications([]); return; }
-        const data = await res.json();
-        setMyApplications(Array.isArray(data) ? data : []);
-
-        // Fetch verification status for providers
-        const vRes = await fetch('/api/verification/upload');
-        if (vRes.ok) setVerification(await vRes.json());
+        // Load applications and verification side by side; one failing
+        // no longer stops the other from loading
+        const [appsRes, vRes] = await Promise.allSettled([
+          fetch('/api/applications/my-applications'),
+          fetch('/api/verification/upload'),
+        ]);
+        if (appsRes.status === 'fulfilled' && appsRes.value.ok) {
+          const data = await appsRes.value.json();
+          setMyApplications(Array.isArray(data) ? data : []);
+        } else {
+          setMyApplications([]);
+        }
+        if (vRes.status === 'fulfilled' && vRes.value.ok) {
+          setVerification(await vRes.value.json());
+        }
       }
     } catch (err) {
       console.error('Failed to load dashboard', err);
@@ -44,401 +110,266 @@ export default function Dashboard() {
     }
   };
 
+  const shell = (children) => (
+    <div className="db min-h-screen bg-[#080f0a] text-[#e9efe9] antialiased">
+      <style>{`
+        .db { font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif; }
+        .serif { font-family: var(--font-serif), Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+        .mono { font-family: var(--font-mono), ui-monospace, monospace; }
+      `}</style>
+      {children}
+    </div>
+  );
+
   if (status === 'loading') {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-[#080f0a]">
-        <div className="w-10 h-10 rounded-full border-2 border-green-500/20 border-t-green-500 animate-spin" />
+    return shell(
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="mono text-[11px] uppercase tracking-[0.18em] text-white/35">Loading…</p>
       </div>
     );
   }
 
   if (!session) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-[#080f0a] gap-4">
-        <p className="text-white/40">Please login to view your dashboard</p>
-        <Link href="/login" className="bg-green-600 text-white px-6 py-3 rounded-xl hover:bg-green-500 transition">
-          Go to Login
+    return shell(
+      <div className="mx-auto flex min-h-screen max-w-6xl flex-col justify-center px-5 md:px-8">
+        <p className="serif text-5xl leading-none">Log in to see your dashboard.</p>
+        <Link href="/login"
+          className="mt-8 inline-flex w-max items-center gap-2 rounded-full bg-green-400 px-6 py-3 text-[14px] font-medium text-[#080f0a] transition hover:bg-green-300">
+          Log in <ArrowRight size={15} />
         </Link>
       </div>
     );
   }
 
-  const totalApplicants = myJobs.reduce((sum, job) => sum + (job.applicants?.length || 0), 0);
-  const openJobs        = myJobs.filter(j => j.status === 'open').length;
-  const acceptedApps    = myApplications.filter(a => a.status === 'accepted').length;
-  const pendingApps     = myApplications.filter(a => a.status === 'pending').length;
-
-  const glassCard = {
-    background: 'rgba(255,255,255,0.04)',
-    border: '1px solid rgba(255,255,255,0.08)',
-    backdropFilter: 'blur(12px)',
-    WebkitBackdropFilter: 'blur(12px)',
-  };
-
   const isClientLike = session.user.role === 'client' || session.user.role === 'admin';
+  const firstName = session.user.name?.split(' ')[0];
 
-  const statCards = isClientLike ? [
-    { icon: Briefcase,      label: 'Total Jobs',       value: myJobs.length,    color: 'rgba(74,222,128,0.15)',  iconColor: '#4ade80' },
-    { icon: CheckCircle,    label: 'Open Jobs',        value: openJobs,         color: 'rgba(96,165,250,0.15)',  iconColor: '#60a5fa' },
-    { icon: Users,          label: 'Total Applicants', value: totalApplicants,  color: 'rgba(251,191,36,0.15)',  iconColor: '#fbbf24' },
-    { icon: MessageCircle,  label: 'Messages',         value: '→',              color: 'rgba(167,139,250,0.15)', iconColor: '#a78bfa', href: '/chat' },
-  ] : [
-    { icon: Briefcase,      label: 'Applied',  value: myApplications.length, color: 'rgba(74,222,128,0.15)',  iconColor: '#4ade80' },
-    { icon: Clock,          label: 'Pending',  value: pendingApps,           color: 'rgba(251,191,36,0.15)',  iconColor: '#fbbf24' },
-    { icon: CheckCircle,    label: 'Accepted', value: acceptedApps,          color: 'rgba(74,222,128,0.15)',  iconColor: '#4ade80' },
-    { icon: MessageCircle,  label: 'Messages', value: '→',                   color: 'rgba(167,139,250,0.15)', iconColor: '#a78bfa', href: '/chat' },
-  ];
+  const totalApplicants = myJobs.reduce((sum, job) => sum + (job.applicants?.length || 0), 0);
+  const openJobs = myJobs.filter((j) => j.status === 'open').length;
+  const acceptedApps = myApplications.filter((a) => a.status === 'accepted').length;
+  const pendingApps = myApplications.filter((a) => a.status === 'pending').length;
 
-  // Only nudge providers who haven't successfully verified yet
-  const showVerificationPrompt =
-    session.user.role === 'provider' &&
-    verification &&
-    verification.verificationStatus !== 'verified';
+  const stats = isClientLike
+    ? [
+        { label: 'Jobs posted', value: myJobs.length },
+        { label: 'Still open', value: openJobs },
+        { label: 'Applicants', value: totalApplicants, accent: totalApplicants > 0 },
+      ]
+    : [
+        { label: 'Applied', value: myApplications.length },
+        { label: 'Waiting', value: pendingApps },
+        { label: 'Accepted', value: acceptedApps, accent: acceptedApps > 0 },
+      ];
 
-  const verificationBannerContent = () => {
-    const s = verification?.verificationStatus;
-    if (s === 'pending') {
-      return {
-        icon: Clock,
-        color: '#facc15',
-        bg: 'rgba(250,204,21,0.08)',
-        border: 'rgba(250,204,21,0.2)',
-        title: 'Verification pending review',
-        body: 'An admin is reviewing your submitted document. This usually takes 1-2 business days.',
-        cta: 'View Status',
-      };
-    }
-    if (s === 'rejected') {
-      return {
-        icon: ShieldAlert,
-        color: '#f87171',
-        bg: 'rgba(248,113,113,0.08)',
-        border: 'rgba(248,113,113,0.2)',
-        title: 'Verification needs attention',
-        body: verification?.verificationRejectionReason || 'Your document was rejected. Please re-submit.',
-        cta: 'Re-submit',
-      };
-    }
-    // unsubmitted
-    return {
-      icon: ShieldCheck,
-      color: '#4ade80',
-      bg: 'rgba(74,222,128,0.08)',
-      border: 'rgba(74,222,128,0.2)',
-      title: 'Get verified to stand out',
-      body: 'Clients trust verified providers more. Upload a quick ID check to earn your badge.',
-      cta: 'Get Verified',
-    };
-  };
+  // A one-line summary that tells people what to do next
+  const summary = isClientLike
+    ? myJobs.length === 0
+      ? 'You haven’t posted a job yet.'
+      : totalApplicants > 0
+        ? `${totalApplicants} ${totalApplicants === 1 ? 'person has' : 'people have'} applied to your jobs.`
+        : 'No applicants yet — they usually come in within a day.'
+    : myApplications.length === 0
+      ? 'You haven’t applied to anything yet.'
+      : acceptedApps > 0
+        ? `${acceptedApps} ${acceptedApps === 1 ? 'client has' : 'clients have'} accepted you. Get in touch.`
+        : `${pendingApps} ${pendingApps === 1 ? 'application is' : 'applications are'} waiting on a reply.`;
 
-  return (
-    <div className="min-h-screen bg-[#080f0a] relative overflow-x-hidden">
-      <style>{`
-        @keyframes fadeUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
-        @keyframes drift {
-          0%,100% { transform:translate(0,0) scale(1); }
-          33% { transform:translate(30px,-20px) scale(1.05); }
-          66% { transform:translate(-20px,15px) scale(0.97); }
-        }
-        .fade-up { animation: fadeUp 0.5s cubic-bezier(.22,1,.36,1) forwards; }
-        .drift { animation: drift 14s ease-in-out infinite; }
-        .d1{animation-delay:.05s} .d2{animation-delay:.1s} .d3{animation-delay:.15s}
-        .d4{animation-delay:.2s}  .d5{animation-delay:.25s} .d6{animation-delay:.3s}
-      `}</style>
+  const vStatus = verification?.verificationStatus;
+  const showVerification = session.user.role === 'provider' && verification && vStatus !== 'verified';
+  const vCopy =
+    vStatus === 'pending'
+      ? { rule: 'border-amber-300', tag: 'text-amber-300', tagText: 'Under review', title: 'Your ID is being checked.', body: 'An admin is reviewing your document. This usually takes 1–2 business days.', cta: 'View status' }
+      : vStatus === 'rejected'
+        ? { rule: 'border-red-400', tag: 'text-red-400', tagText: 'Needs attention', title: 'Your verification was declined.', body: verification?.verificationRejectionReason || 'Please upload a clearer document and try again.', cta: 'Re-submit' }
+        : { rule: 'border-green-400', tag: 'text-green-400', tagText: 'Not verified', title: 'Get your verified badge.', body: 'Clients pick verified providers first. A quick ID check is all it takes.', cta: 'Get verified' };
 
-      {/* Background orbs */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-[-10%] left-[-5%] w-[500px] h-[500px] rounded-full drift"
-          style={{ background: 'radial-gradient(circle, rgba(22,163,74,0.12) 0%, transparent 70%)' }} />
-        <div className="absolute bottom-[-10%] right-[-5%] w-[500px] h-[500px] rounded-full drift"
-          style={{ background: 'radial-gradient(circle, rgba(16,185,129,0.1) 0%, transparent 70%)', animationDelay: '5s' }} />
-        <div className="absolute inset-0 opacity-[0.025]" style={{
-          backgroundImage: 'linear-gradient(rgba(255,255,255,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.8) 1px, transparent 1px)',
-          backgroundSize: '72px 72px',
-        }} />
-      </div>
+  const shortcuts = isClientLike
+    ? [
+        ['/post-job', 'Post a new job'],
+        ['/browse', 'See all open jobs'],
+        ['/chat', 'Messages'],
+        ['/profile', 'Your profile'],
+      ]
+    : [
+        ['/browse', 'Find new jobs'],
+        ['/chat', 'Messages'],
+        ['/profile', 'Update your profile'],
+        ['/verification', vStatus === 'verified' ? 'Verification ✓' : 'Get verified'],
+      ];
 
-      <div className="relative max-w-6xl mx-auto px-4 py-10">
+  return shell(
+    <div className="mx-auto max-w-6xl px-5 pb-16 pt-10 md:px-8 md:pt-16">
 
-        {/* Header */}
-        <div className="mb-8 opacity-0 fade-up">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs font-semibold uppercase tracking-widest text-green-400/60">Dashboard</span>
+      {/* Header */}
+      <header className="mb-12">
+        <p className="mono mb-5 text-[11px] uppercase tracking-[0.18em] text-white/35">
+          {session.user.role} account
+        </p>
+        <h1 className="serif text-5xl leading-[0.95] md:text-7xl">
+          {greeting()},<br /><em className="text-green-400">{firstName}.</em>
+        </h1>
+        {!loading && <p className="mt-6 max-w-lg text-[15px] leading-relaxed text-white/55">{summary}</p>}
+      </header>
+
+      {/* Stats */}
+      <dl className="mb-16 grid grid-cols-3 border-y border-white/10">
+        {stats.map((s, i) => (
+          <div key={s.label} className={`py-6 ${i > 0 ? 'border-l border-white/10 pl-5 md:pl-8' : ''}`}>
+            <dt className="text-[12px] text-white/40">{s.label}</dt>
+            <dd className={`mono mt-2 text-3xl md:text-4xl ${s.accent ? 'text-green-400' : 'text-white'}`}>
+              {loading ? '–' : s.value}
+            </dd>
           </div>
-          <h1 className="text-3xl md:text-4xl font-bold text-white">
-            Hey, {session.user.name?.split(' ')[0]} 👋
-          </h1>
-          <p className="text-white/30 text-sm mt-1 capitalize">{session.user.role} account</p>
-        </div>
+        ))}
+      </dl>
 
-        {/* ── Verification banner (providers only, unless verified) ── */}
-        {showVerificationPrompt && (() => {
-          const banner = verificationBannerContent();
-          const Icon = banner.icon;
-          return (
-            <Link href="/verification"
-              className="flex items-center gap-4 p-5 rounded-2xl mb-6 opacity-0 fade-up transition hover:brightness-110"
-              style={{ background: banner.bg, border: `1px solid ${banner.border}` }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-                style={{ background: `${banner.color}22` }}>
-                <Icon size={20} style={{ color: banner.color }} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-white">{banner.title}</p>
-                <p className="text-xs text-white/40 mt-0.5">{banner.body}</p>
-              </div>
-              <span className="flex items-center gap-1 text-xs font-semibold shrink-0"
-                style={{ color: banner.color }}>
-                {banner.cta} <ArrowRight size={13} />
-              </span>
-            </Link>
-          );
-        })()}
+      <div className="grid gap-16 lg:grid-cols-[1fr_300px] lg:gap-14">
 
-        {/* Stat Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
-          {statCards.map((s, i) => (
-            <div
-              key={i}
-              className={`p-5 rounded-2xl opacity-0 fade-up d${i + 1}`}
-              style={glassCard}
-            >
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-3"
-                style={{ background: s.color }}>
-                <s.icon size={17} style={{ color: s.iconColor }} />
-              </div>
-              <p className="text-xs text-white/35 font-medium mb-1">{s.label}</p>
-              {s.href ? (
-                <Link href={s.href} className="text-2xl font-bold text-white hover:text-green-400 transition">{s.value}</Link>
-              ) : (
-                <p className="text-2xl font-bold text-white">{s.value}</p>
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* Main grid */}
-        <div className="grid md:grid-cols-12 gap-6">
-
-          {/* Main content */}
-          <div className="md:col-span-8 opacity-0 fade-up d3">
+        {/* ─── Main list ─── */}
+        <section>
+          <div className="mb-2 flex items-end justify-between gap-6">
+            <h2 className="serif text-4xl leading-none">{isClientLike ? 'Your jobs' : 'Your applications'}</h2>
             {isClientLike ? (
-              <>
-                <div className="flex justify-between items-center mb-5">
-                  <h2 className="text-lg font-semibold text-white">My Posted Jobs</h2>
-                  <Link href="/post-job"
-                    className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl text-white transition"
-                    style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 16px rgba(22,163,74,0.3)' }}>
-                    <Plus size={14} /> Post New Job
-                  </Link>
-                </div>
-
-                {loading ? (
-                  <div className="space-y-3">
-                    {[1,2,3].map(i => (
-                      <div key={i} className="p-6 rounded-2xl animate-pulse" style={glassCard}>
-                        <div className="h-4 rounded-lg w-3/4 mb-3" style={{ background: 'rgba(255,255,255,0.06)' }} />
-                        <div className="h-3 rounded-lg w-1/4" style={{ background: 'rgba(255,255,255,0.04)' }} />
-                      </div>
-                    ))}
-                  </div>
-                ) : myJobs.length === 0 ? (
-                  <div className="p-14 rounded-2xl text-center" style={glassCard}>
-                    <Briefcase size={36} className="mx-auto mb-4" style={{ color: 'rgba(255,255,255,0.15)' }} />
-                    <p className="text-white/40 mb-5 text-sm">No jobs posted yet.</p>
-                    <Link href="/post-job"
-                      className="inline-flex items-center gap-2 text-sm font-semibold px-6 py-3 rounded-xl text-white transition"
-                      style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 16px rgba(22,163,74,0.3)' }}>
-                      Post Your First Job
-                    </Link>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {myJobs.map(job => (
-                      <div key={job._id} className="p-5 rounded-2xl transition-all hover:border-white/15 group"
-                        style={{ ...glassCard, transition: 'border-color 0.2s' }}>
-                        <div className="flex justify-between items-start mb-2">
-                          <h3 className="font-semibold text-white text-base group-hover:text-green-400 transition-colors">{job.title}</h3>
-                          <span className={`text-[11px] px-2.5 py-1 rounded-full font-semibold capitalize ${
-                            job.status === 'open'
-                              ? 'text-green-400 bg-green-400/10 border border-green-400/20'
-                              : 'text-white/30 bg-white/5 border border-white/10'
-                          }`}>
-                            {job.status}
-                          </span>
-                        </div>
-                        <p className="text-green-400 font-semibold text-sm mb-3">
-                          ₦{job.budgetMin?.toLocaleString()} — ₦{job.budgetMax?.toLocaleString()}
-                        </p>
-                        <div className="flex items-center gap-4 text-xs text-white/30">
-                          <span className="flex items-center gap-1"><MapPin size={11} />{job.location}</span>
-                          <span className="flex items-center gap-1"><Clock size={11} />{new Date(job.createdAt).toLocaleDateString()}</span>
-                        </div>
-                        <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/5">
-                          <span className={`flex items-center gap-1.5 text-xs font-medium ${job.applicants?.length > 0 ? 'text-green-400' : 'text-white/25'}`}>
-                            <Users size={13} />
-                            {job.applicants?.length || 0} applicant{job.applicants?.length !== 1 ? 's' : ''}
-                          </span>
-                          <Link href={`/jobs/${job._id}`}
-                            className="flex items-center gap-1 text-xs font-semibold text-green-400 hover:text-green-300 transition">
-                            View & Manage <ArrowRight size={13} />
-                          </Link>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
+              <Link href="/post-job"
+                className="inline-flex items-center gap-1.5 rounded-full bg-green-400 px-4 py-2 text-[13px] font-medium text-[#080f0a] transition hover:bg-green-300">
+                <Plus size={14} /> New job
+              </Link>
             ) : (
-              <>
-                <div className="flex justify-between items-center mb-5">
-                  <h2 className="text-lg font-semibold text-white">My Applications</h2>
-                  <Link href="/browse" className="flex items-center gap-1 text-xs font-semibold text-green-400 hover:text-green-300 transition">
-                    Browse More <ArrowRight size={13} />
-                  </Link>
-                </div>
-
-                {loading ? (
-                  <div className="space-y-3">
-                    {[1,2,3].map(i => (
-                      <div key={i} className="p-6 rounded-2xl animate-pulse" style={glassCard}>
-                        <div className="h-4 rounded-lg w-3/4 mb-3" style={{ background: 'rgba(255,255,255,0.06)' }} />
-                        <div className="h-3 rounded-lg w-1/4" style={{ background: 'rgba(255,255,255,0.04)' }} />
-                      </div>
-                    ))}
-                  </div>
-                ) : myApplications.length === 0 ? (
-                  <div className="p-14 rounded-2xl text-center" style={glassCard}>
-                    <Clock size={36} className="mx-auto mb-4" style={{ color: 'rgba(255,255,255,0.15)' }} />
-                    <p className="text-white/40 mb-5 text-sm">No applications yet.</p>
-                    <Link href="/browse"
-                      className="inline-flex items-center gap-2 text-sm font-semibold px-6 py-3 rounded-xl text-white"
-                      style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 16px rgba(22,163,74,0.3)' }}>
-                      Browse Jobs
-                    </Link>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {myApplications.map(app => (
-                      <div key={app._id} className="p-5 rounded-2xl group transition-all hover:border-white/15"
-                        style={{ ...glassCard, transition: 'border-color 0.2s' }}>
-                        <div className="flex justify-between items-start mb-2">
-                          <h3 className="font-semibold text-white group-hover:text-green-400 transition-colors">
-                            {app.job?.title || 'Job no longer available'}
-                          </h3>
-                          <span className={`text-[11px] px-2.5 py-1 rounded-full font-semibold capitalize ${
-                            app.status === 'accepted' ? 'text-green-400 bg-green-400/10 border border-green-400/20'
-                            : app.status === 'rejected' ? 'text-red-400 bg-red-400/10 border border-red-400/20'
-                            : 'text-yellow-400 bg-yellow-400/10 border border-yellow-400/20'
-                          }`}>
-                            {app.status}
-                          </span>
-                        </div>
-                        {app.job && (
-                          <>
-                            <p className="text-green-400 font-semibold text-sm mb-2">
-                              ₦{app.job.budgetMin?.toLocaleString()} — ₦{app.job.budgetMax?.toLocaleString()}
-                            </p>
-                            <div className="flex items-center gap-4 text-xs text-white/30">
-                              <span className="flex items-center gap-1"><MapPin size={11} />{app.job.location}</span>
-                              <span className="flex items-center gap-1 capitalize"><Briefcase size={11} />{app.job.category}</span>
-                            </div>
-                          </>
-                        )}
-                        <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/5">
-                          <span className="text-xs text-white/25">
-                            Applied {new Date(app.createdAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}
-                          </span>
-                          {app.job && (
-                            <Link href={`/jobs/${app.job._id}`}
-                              className="flex items-center gap-1 text-xs font-semibold text-green-400 hover:text-green-300 transition">
-                              View Job <ArrowRight size={13} />
-                            </Link>
-                          )}
-                        </div>
-                        {app.status === 'accepted' && (
-                          <div className="mt-3 p-3 rounded-xl flex items-center gap-2 text-xs text-green-400"
-                            style={{ background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.2)' }}>
-                            <CheckCircle size={14} />
-                            Congratulations! Your application was accepted. Contact the client to get started.
-                          </div>
-                        )}
-                        {app.status === 'rejected' && (
-                          <div className="mt-3 p-3 rounded-xl flex items-center gap-2 text-xs text-red-400"
-                            style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)' }}>
-                            <XCircle size={14} />
-                            This application wasn't accepted. Keep applying to other jobs!
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
+              <Link href="/browse" className="inline-flex items-center gap-1.5 text-[13px] text-white/55 transition hover:text-green-400">
+                Find more <ArrowUpRight size={14} />
+              </Link>
             )}
           </div>
 
-          {/* Sidebar */}
-          <div className="md:col-span-4 space-y-4 opacity-0 fade-up d4">
-
-            {/* Quick Actions */}
-            <div className="p-5 rounded-2xl" style={glassCard}>
-              <p className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-4">Quick Actions</p>
-              <div className="space-y-1">
-                {isClientLike ? (
-                  <>
-                    <Link href="/post-job" className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-white/70 hover:text-white hover:bg-white/5 transition">
-                      <Plus size={16} className="text-green-400" /> Post a New Job
-                    </Link>
-                    <Link href="/browse" className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-white/70 hover:text-white hover:bg-white/5 transition">
-                      <Briefcase size={16} className="text-green-400" /> Browse All Jobs
-                    </Link>
-                  </>
-                ) : (
-                  <>
-                    <Link href="/browse" className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-white/70 hover:text-white hover:bg-white/5 transition">
-                      <Briefcase size={16} className="text-green-400" /> Find New Jobs
-                    </Link>
-                    <Link href="/profile" className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-white/70 hover:text-white hover:bg-white/5 transition">
-                      <Users size={16} className="text-green-400" /> Update Profile
-                    </Link>
-                    <Link href="/verification" className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-white/70 hover:text-white hover:bg-white/5 transition">
-                      <ShieldCheck size={16} className="text-green-400" />
-                      Get Verified
-                      {verification?.verificationStatus === 'verified' && (
-                        <span className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full"
-                          style={{ background: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.25)' }}>
-                          Done
-                        </span>
-                      )}
-                    </Link>
-                  </>
-                )}
-                <Link href="/chat" className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-white/70 hover:text-white hover:bg-white/5 transition">
-                  <MessageCircle size={16} className="text-green-400" /> Go to Messages
+          <div className="border-t border-white/10">
+            {loading ? (
+              <RowSkeleton />
+            ) : isClientLike ? (
+              myJobs.length === 0 ? (
+                <div className="py-14">
+                  <p className="text-[15px] text-white/60">Describe what you need and local providers will apply.</p>
+                  <Link href="/post-job" className="mt-5 inline-flex items-center gap-2 border-b border-green-400 pb-0.5 text-[15px] text-white transition hover:text-green-400">
+                    Post your first job <ArrowRight size={15} className="text-green-400" />
+                  </Link>
+                </div>
+              ) : (
+                <ul>
+                  {myJobs.map((job) => {
+                    const n = job.applicants?.length || 0;
+                    return (
+                      <li key={job._id}>
+                        <Link href={`/jobs/${job._id}`}
+                          className="group grid gap-3 border-b border-white/[0.07] py-6 transition-colors hover:bg-white/[0.02] md:grid-cols-[1fr_auto] md:items-center md:gap-8 md:px-3">
+                          <div className="min-w-0">
+                            <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                              <Status value={job.status} />
+                              <span className="mono text-[11px] text-white/30">
+                                {job.location && `${job.location} · `}{timeAgo(job.createdAt)}
+                              </span>
+                            </div>
+                            <h3 className="mb-1 line-clamp-1 text-[17px] font-medium text-white transition-colors group-hover:text-green-400">
+                              {job.title}
+                            </h3>
+                            <p className="mono text-[13px] text-white/50">{budget(job)}</p>
+                          </div>
+                          <div className="flex items-center justify-between gap-6 md:justify-end">
+                            <p className={`text-[13px] ${n > 0 ? 'text-green-400' : 'text-white/35'}`}>
+                              <span className="mono text-lg">{n}</span> {n === 1 ? 'applicant' : 'applicants'}
+                            </p>
+                            <span className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 text-white/40 transition group-hover:border-green-400 group-hover:bg-green-400 group-hover:text-[#080f0a]">
+                              <ArrowUpRight size={16} />
+                            </span>
+                          </div>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )
+            ) : myApplications.length === 0 ? (
+              <div className="py-14">
+                <p className="text-[15px] text-white/60">Find a job near you, send a short note and your rate.</p>
+                <Link href="/browse" className="mt-5 inline-flex items-center gap-2 border-b border-green-400 pb-0.5 text-[15px] text-white transition hover:text-green-400">
+                  Browse open jobs <ArrowRight size={15} className="text-green-400" />
                 </Link>
               </div>
-            </div>
+            ) : (
+              <ul>
+                {myApplications.map((app) => {
+                  const job = app.job;
+                  const Row = job ? Link : 'div';
+                  return (
+                    <li key={app._id} className="border-b border-white/[0.07]">
+                      <Row {...(job ? { href: `/jobs/${job._id}` } : {})}
+                        className={`group grid gap-3 py-6 md:grid-cols-[1fr_auto] md:items-center md:gap-8 md:px-3 ${job ? 'transition-colors hover:bg-white/[0.02]' : ''}`}>
+                        <div className="min-w-0">
+                          <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                            <Status value={app.status} />
+                            <span className="mono text-[11px] text-white/30">
+                              Applied {timeAgo(app.createdAt)}
+                              {job?.location && ` · ${job.location}`}
+                            </span>
+                          </div>
+                          <h3 className={`mb-1 line-clamp-1 text-[17px] font-medium transition-colors ${job ? 'text-white group-hover:text-green-400' : 'text-white/35'}`}>
+                            {job?.title || 'This job has been removed'}
+                          </h3>
+                          {job && (
+                            <p className="mono text-[13px] text-white/50">
+                              {budget(job)}{job.category && <span className="text-white/30"> · {job.category}</span>}
+                            </p>
+                          )}
+                        </div>
+                        {job && (
+                          <span className="hidden h-9 w-9 items-center justify-center rounded-full border border-white/10 text-white/40 transition group-hover:border-green-400 group-hover:bg-green-400 group-hover:text-[#080f0a] md:flex">
+                            <ArrowUpRight size={16} />
+                          </span>
+                        )}
+                      </Row>
 
-            {/* Messages CTA */}
-            <div className="p-5 rounded-2xl relative overflow-hidden"
-              style={{ background: 'linear-gradient(135deg, rgba(22,163,74,0.2) 0%, rgba(5,150,105,0.15) 100%)', border: '1px solid rgba(74,222,128,0.2)' }}>
-              <div className="absolute top-[-20px] right-[-20px] w-24 h-24 rounded-full"
-                style={{ background: 'radial-gradient(circle, rgba(74,222,128,0.15) 0%, transparent 70%)' }} />
-              <MessageCircle size={20} className="text-green-400 mb-3" />
-              <p className="text-white font-semibold text-sm mb-1">Messages</p>
-              <p className="text-white/40 text-xs mb-4">
-                View your conversations with {isClientLike ? 'service providers' : 'clients'}.
-              </p>
-              <Link href="/chat"
-                className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-semibold text-white transition"
-                style={{ background: 'rgba(74,222,128,0.2)', border: '1px solid rgba(74,222,128,0.3)' }}>
-                Open Messages <ArrowRight size={14} />
-              </Link>
-            </div>
-
+                      {app.status === 'accepted' && (
+                        <div className="-mt-2 mb-6 flex flex-wrap items-center justify-between gap-3 border-l-2 border-green-400 pl-4 md:mx-3">
+                          <p className="text-[13px] text-white/70">You got it. Message the client to agree on a time.</p>
+                          <Link href="/chat" className="inline-flex items-center gap-1.5 text-[13px] text-green-400 hover:underline underline-offset-4">
+                            Open messages <ArrowRight size={13} />
+                          </Link>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
-        </div>
+        </section>
+
+        {/* ─── Side ─── */}
+        <aside className="space-y-12">
+          {showVerification && (
+            <Link href="/verification" className={`group block border-l-2 ${vCopy.rule} pl-5`}>
+              <p className={`mono mb-3 text-[10px] uppercase tracking-[0.16em] ${vCopy.tag}`}>{vCopy.tagText}</p>
+              <p className="serif text-2xl leading-tight text-white">{vCopy.title}</p>
+              <p className="mt-2 text-[13px] leading-relaxed text-white/50">{vCopy.body}</p>
+              <span className="mt-4 inline-flex items-center gap-1.5 text-[13px] text-white transition group-hover:text-green-400">
+                {vCopy.cta} <ArrowRight size={14} className="transition-transform group-hover:translate-x-0.5" />
+              </span>
+            </Link>
+          )}
+
+          <nav>
+            <p className="mono mb-3 text-[10px] uppercase tracking-[0.16em] text-white/35">Shortcuts</p>
+            <ul className="border-t border-white/10">
+              {shortcuts.map(([href, label]) => (
+                <li key={href}>
+                  <Link href={href}
+                    className="group flex items-center justify-between border-b border-white/10 py-3.5 text-[14px] text-white/75 transition hover:text-green-400">
+                    {label}
+                    <ArrowUpRight size={15} className="text-white/25 transition group-hover:text-green-400" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        </aside>
       </div>
     </div>
   );
