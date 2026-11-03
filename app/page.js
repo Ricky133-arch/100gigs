@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, ArrowUpRight, Search } from 'lucide-react';
 
@@ -47,20 +47,21 @@ const STEPS = {
    Helpers
    ──────────────────────────────────────────────────────────── */
 
+// Uses a callback ref so it also works for sections that mount later
+// (e.g. the job board, which only renders after jobs have loaded).
 function useReveal(threshold = 0.12) {
-  const ref = useRef(null);
+  const [node, setNode] = useState(null);
   const [shown, setShown] = useState(false);
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+    if (!node || shown) return;
     const io = new IntersectionObserver(
       ([e]) => { if (e.isIntersecting) { setShown(true); io.disconnect(); } },
       { threshold }
     );
-    io.observe(el);
+    io.observe(node);
     return () => io.disconnect();
-  }, [threshold]);
-  return [ref, shown];
+  }, [node, shown, threshold]);
+  return [setNode, shown];
 }
 
 const naira = (n) => (typeof n === 'number' ? `₦${n.toLocaleString('en-NG')}` : null);
@@ -182,10 +183,6 @@ export default function Home() {
         <div className="mx-auto grid max-w-7xl gap-14 px-5 pb-20 pt-14 md:px-8 md:pt-20 lg:grid-cols-[1.25fr_1fr] lg:gap-20 lg:pb-28">
           {/* Left */}
           <div>
-            <p className={`mono mb-8 text-[11px] uppercase tracking-[0.18em] text-white/40 rise ${mounted ? 'on' : ''}`}>
-              Port Harcourt <span className="text-green-400">/</span> Rivers State <span className="text-green-400">/</span> NG
-            </p>
-
             <h1 className={`serif text-[3.4rem] leading-[0.95] sm:text-7xl lg:text-[6.25rem] rise ${mounted ? 'on' : ''}`}
               style={{ transitionDelay: '80ms' }}>
               Skilled hands,
