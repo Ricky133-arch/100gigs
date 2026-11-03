@@ -1,12 +1,9 @@
 'use client';
 import { useSession } from 'next-auth/react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  User, MapPin, Phone, Briefcase, Save, Loader2,
-  CheckCircle, ArrowRight, Camera, Link2, Copy, Check,
-  Instagram, Twitter, Youtube, Linkedin, Facebook,
-} from 'lucide-react';
+import Link from 'next/link';
+import { Loader2, Check, ArrowUpRight, Share2 } from 'lucide-react';
 import { toast } from 'sonner';
 import VerifiedBadge from '@/components/VerifiedBadge';
 
@@ -17,92 +14,62 @@ const SKILLS = [
   'Event Planning', 'AC Repair', 'Other',
 ];
 
+// Same list as Post a Job, so providers and jobs use matching area names
 const LOCATIONS = [
   'GRA Phase 1', 'GRA Phase 2', 'Trans Amadi', 'Woji',
-  'Elelenwo', 'Rumuomasi', 'Diobu', 'Borokiri',
-  'D-Line', 'Choba', 'Ada George', 'Rukpokwu',
-  'Port Harcourt City', 'Other',
+  'Elelenwo', 'Rumuomasi', 'Rumuola', 'Diobu', 'Borokiri',
+  'D-Line', 'Rumuigbo', 'Ozuoba', 'Choba', 'Ada George',
+  'Rukpokwu', 'Eneka', 'Mgbuoba',
+  'Port Harcourt City', 'Asari-Toru', 'Other',
 ];
 
 const SOCIAL_PLATFORMS = [
-  {
-    key:         'instagram',
-    label:       'Instagram',
-    placeholder: '@yourhandle or full URL',
-    hint:        'Share your work portfolio on Instagram',
-    icon:        '📸',
-    buildUrl:    (v) => v.startsWith('http') ? v : `https://instagram.com/${v.replace('@', '')}`,
-  },
-  {
-    key:         'facebook',
-    label:       'Facebook',
-    placeholder: 'Paste your full Facebook profile URL',
-    hint:        'Your Facebook profile or business page — paste the full link',
-    icon:        '👥',
-    buildUrl:    (v) => v.startsWith('http') ? v : `https://facebook.com/${v}`,
-  },
-  {
-    key:         'twitter',
-    label:       'X (Twitter)',
-    placeholder: '@yourhandle or full URL',
-    hint:        'Your X / Twitter handle',
-    icon:        '𝕏',
-    buildUrl:    (v) => v.startsWith('http') ? v : `https://x.com/${v.replace('@', '')}`,
-  },
-  {
-    key:         'tiktok',
-    label:       'TikTok',
-    placeholder: '@yourhandle or full URL',
-    hint:        'Short videos of your work build serious trust',
-    icon:        '🎵',
-    buildUrl:    (v) => v.startsWith('http') ? v : `https://tiktok.com/@${v.replace('@', '')}`,
-  },
-  {
-    key:         'linkedin',
-    label:       'LinkedIn',
-    placeholder: 'your-name or full URL',
-    hint:        'Professional profile for corporate clients',
-    icon:        '💼',
-    buildUrl:    (v) => v.startsWith('http') ? v : `https://linkedin.com/in/${v}`,
-  },
-  {
-    key:         'youtube',
-    label:       'YouTube',
-    placeholder: '@yourchannel or full URL',
-    hint:        'Video tutorials or completed project showcases',
-    icon:        '▶️',
-    buildUrl:    (v) => v.startsWith('http') ? v : `https://youtube.com/@${v.replace('@', '')}`,
-  },
+  { key: 'instagram', label: 'Instagram', placeholder: '@yourhandle', hint: 'Photos of your work build trust fast.', hosts: ['instagram.com'], build: (h) => `https://www.instagram.com/${h}/` },
+  { key: 'tiktok', label: 'TikTok', placeholder: '@yourhandle', hint: 'Short videos of jobs you’ve done.', hosts: ['tiktok.com'], build: (h) => `https://www.tiktok.com/@${h}` },
+  { key: 'facebook', label: 'Facebook', placeholder: 'Full profile or page link', hint: 'Paste the full link to your page.', hosts: ['facebook.com', 'fb.com'], build: (h) => `https://www.facebook.com/${h}` },
+  { key: 'twitter', label: 'X', placeholder: '@yourhandle', hosts: ['x.com', 'twitter.com'], build: (h) => `https://x.com/${h}` },
+  { key: 'linkedin', label: 'LinkedIn', placeholder: 'your-name', hint: 'Useful for office and corporate clients.', hosts: ['linkedin.com'], build: (h) => `https://www.linkedin.com/in/${h}` },
+  { key: 'youtube', label: 'YouTube', placeholder: '@yourchannel', hosts: ['youtube.com', 'youtu.be'], build: (h) => `https://www.youtube.com/@${h}` },
 ];
 
-const glass = {
-  background:          'rgba(255,255,255,0.04)',
-  border:              '1px solid rgba(255,255,255,0.08)',
-  backdropFilter:      'blur(12px)',
-  WebkitBackdropFilter:'blur(12px)',
-};
+// A full URL only counts if it really points at that platform
+function socialUrl(platform, raw) {
+  const v = String(raw || '').trim();
+  if (!v) return null;
+  if (/^https?:\/\//i.test(v)) {
+    try {
+      const host = new URL(v).hostname.replace(/^www\.|^m\./, '');
+      return platform.hosts.some((h) => host === h || host.endsWith(`.${h}`)) ? v : null;
+    } catch { return null; }
+  }
+  const handle = v.replace(/^@/, '').replace(/[^\w.\-]/g, '');
+  return handle ? platform.build(handle) : null;
+}
 
-const inputStyle = {
-  background: 'rgba(255,255,255,0.06)',
-  border:     '1px solid rgba(255,255,255,0.1)',
-  color:      'white',
-};
+const label = 'mono mb-3 block text-[10px] uppercase tracking-[0.16em] text-white/35';
+const input = 'w-full border-b border-white/15 bg-transparent pb-3 text-[16px] text-white outline-none transition-colors placeholder:text-white/20 focus:border-green-400';
 
-const onFocus = e => e.target.style.borderColor = 'rgba(74,222,128,0.5)';
-const onBlur  = e => e.target.style.borderColor = 'rgba(255,255,255,0.1)';
-
-const Section = ({ icon: Icon, title, children }) => (
-  <div className="p-6 rounded-2xl" style={glass}>
-    <div className="flex items-center gap-2.5 mb-5">
-      <div className="w-7 h-7 rounded-lg flex items-center justify-center"
-        style={{ background: 'rgba(74,222,128,0.12)' }}>
-        <Icon size={14} className="text-green-400" />
+// Defined outside the page component so inputs inside keep focus while typing
+function Section({ n, title, hint, children }) {
+  return (
+    <section className="border-t border-white/10 pt-8">
+      <div className="mb-8 flex items-baseline gap-4">
+        <span className="mono text-[11px] text-green-400">{String(n).padStart(2, '0')}</span>
+        <div>
+          <h2 className="text-[17px] font-medium text-white">{title}</h2>
+          {hint && <p className="mt-1 text-[13px] text-white/40">{hint}</p>}
+        </div>
       </div>
-      <p className="text-sm font-semibold text-white">{title}</p>
-    </div>
-    {children}
-  </div>
-);
+      {children}
+    </section>
+  );
+}
+
+const EMPTY_SOCIALS = { instagram: '', facebook: '', twitter: '', tiktok: '', linkedin: '', youtube: '' };
+const editable = (p) => JSON.stringify({
+  name: p.name, phone: p.phone, bio: p.bio, location: p.location,
+  skills: [...p.skills].sort(), username: p.username, socialLinks: p.socialLinks,
+});
 
 export default function ProfilePage() {
   const { data: session, status, update: updateSession } = useSession();
@@ -111,467 +78,468 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState({
     name: '', email: '', phone: '', bio: '', location: '', skills: [],
     avatar: '', verificationStatus: 'unsubmitted', username: '',
-    socialLinks: {
-       instagram: '', facebook: '',
-      twitter: '', tiktok: '', linkedin: '', youtube: '',
-    },
+    socialLinks: { ...EMPTY_SOCIALS },
   });
-
-  const [loading,         setLoading]         = useState(true);
-  const [saving,          setSaving]          = useState(false);
+  const [savedSnapshot, setSavedSnapshot] = useState(null); // last saved version
+  const [savedUsername, setSavedUsername] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const [visible,         setVisible]         = useState(false);
-  const [saved,           setSaved]           = useState(false);
-  const [copied,          setCopied]          = useState(false);
+  const [copied, setCopied] = useState(false);
   const [usernameChecking, setUsernameChecking] = useState(false);
   const [usernameAvailable, setUsernameAvailable] = useState(null);
+  const checkId = useRef(0);
+
+  const role = session?.user?.role;
+  const isProvider = role === 'provider';
 
   useEffect(() => {
-    if (status === 'unauthenticated') router.push('/login');
-  }, [status]);
+    if (status === 'unauthenticated') router.push('/login?callbackUrl=%2Fprofile');
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (session) {
-      fetchProfile();
-      setTimeout(() => setVisible(true), 100);
-    }
-  }, [session]);
+  useEffect(() => { if (session) fetchProfile(); }, [session?.user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchProfile = async () => {
+    setLoadFailed(false);
     try {
-      const res  = await fetch('/api/users/profile');
+      const res = await fetch('/api/users/profile');
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
-      setProfile({
-        name:               data.name               || '',
-        email:              data.email              || '',
-        phone:              data.phone              || '',
-        bio:                data.bio                || '',
-        location:           data.location           || '',
-        skills:             data.skills             || [],
-        avatar:             data.avatar             || '',
+      const p = {
+        name: data.name || '',
+        email: data.email || '',
+        phone: data.phone || '',
+        bio: data.bio || '',
+        location: data.location || '',
+        skills: data.skills || [],
+        avatar: data.avatar || '',
         verificationStatus: data.verificationStatus || 'unsubmitted',
-        username:           data.username           || '',
-        socialLinks: {
-          instagram: data.socialLinks?.instagram || '',
-          facebook:  data.socialLinks?.facebook  || '',
-          twitter:   data.socialLinks?.twitter   || '',
-          tiktok:    data.socialLinks?.tiktok    || '',
-          linkedin:  data.socialLinks?.linkedin  || '',
-          youtube:   data.socialLinks?.youtube   || '',
-        },
-      });
+        username: data.username || '',
+        socialLinks: { ...EMPTY_SOCIALS, ...(data.socialLinks || {}) },
+      };
+      setProfile(p);
+      setSavedSnapshot(editable(p));
+      setSavedUsername(p.username);
     } catch (err) {
       console.error(err);
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleChange = e => setProfile({ ...profile, [e.target.name]: e.target.value });
+  const dirty = savedSnapshot !== null && editable(profile) !== savedSnapshot;
 
-  const handleSocialChange = (key, value) => setProfile(prev => ({
-    ...prev,
-    socialLinks: { ...prev.socialLinks, [key]: value },
-  }));
-
-  const toggleSkill = skill => setProfile(prev => ({
-    ...prev,
-    skills: prev.skills.includes(skill)
-      ? prev.skills.filter(s => s !== skill)
-      : [...prev.skills, skill],
-  }));
-
+  // Warn before leaving with unsaved changes
   useEffect(() => {
-    if (!profile.username || profile.username.length < 3) {
-      setUsernameAvailable(null);
-      return;
-    }
+    if (!dirty) return;
+    const warn = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+
+  // Username availability (ignores stale answers and your own current name)
+  useEffect(() => {
+    const u = profile.username;
+    if (!u || u.length < 3 || u === savedUsername) { setUsernameAvailable(null); setUsernameChecking(false); return; }
+    const myId = ++checkId.current;
+    setUsernameChecking(true);
     const timer = setTimeout(async () => {
-      setUsernameChecking(true);
       try {
-        const res = await fetch(`/api/users/check-username?username=${profile.username}`);
+        const res = await fetch(`/api/users/check-username?username=${encodeURIComponent(u)}`);
         const data = await res.json();
-        setUsernameAvailable(data.available);
+        if (myId === checkId.current) setUsernameAvailable(!!data.available);
       } catch {
-        setUsernameAvailable(null);
+        if (myId === checkId.current) setUsernameAvailable(null);
       } finally {
-        setUsernameChecking(false);
+        if (myId === checkId.current) setUsernameChecking(false);
       }
-    }, 500);
+    }, 450);
     return () => clearTimeout(timer);
-  }, [profile.username]);
+  }, [profile.username, savedUsername]);
 
-  const shareableLink = typeof window !== 'undefined'
-  ? profile.username
-    ? `${window.location.origin}/u/${profile.username}`
-    : `${window.location.origin}/profile/${session?.user?.id}`
-  : '';
+  const set = (name, value) => setProfile((p) => ({ ...p, [name]: value }));
+  const setSocial = (key, value) => setProfile((p) => ({ ...p, socialLinks: { ...p.socialLinks, [key]: value } }));
+  const toggleSkill = (skill) => setProfile((p) => ({
+    ...p,
+    skills: p.skills.includes(skill) ? p.skills.filter((s) => s !== skill) : [...p.skills, skill],
+  }));
 
-  const copyLink = async () => {
-    await navigator.clipboard.writeText(shareableLink);
-    setCopied(true);
-    toast.success('Profile link copied!');
-    setTimeout(() => setCopied(false), 2000);
+  // The link uses the SAVED username, so it always works when shared
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const publicPath = savedUsername ? `/u/${savedUsername}` : `/profile/${session?.user?.id}`;
+  const shareableLink = `${origin}${publicPath}`;
+
+  const shareLink = async () => {
+    if (navigator.share) {
+      try { await navigator.share({ title: `${profile.name} on 100Gigs`, url: shareableLink }); return; }
+      catch (e) { if (e?.name === 'AbortError') return; }
+    }
+    try {
+      await navigator.clipboard.writeText(shareableLink);
+      setCopied(true);
+      toast.success('Link copied');
+      setTimeout(() => setCopied(false), 2000);
+    } catch { toast.error('Couldn’t copy the link'); }
   };
 
+  // Uploading a photo saves ONLY the photo, not other half-finished edits
   const handleAvatarChange = async (e) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    if (file.size > 10 * 1024 * 1024) { toast.error('Image too large (max 10MB)'); return; }
-    if (!file.type.startsWith('image/')) { toast.error('Please choose an image file'); return; }
+    if (!file.type.startsWith('image/')) { toast.error('Choose an image file'); return; }
+    if (file.size > 10 * 1024 * 1024) { toast.error('That photo is over 10MB'); return; }
 
     setUploadingAvatar(true);
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const res  = await fetch('/api/upload', { method: 'POST', body: formData });
-      if (!res.ok) throw new Error('Upload failed');
-      const data = await res.json();
+      const fd = new FormData();
+      fd.append('file', file);
+      const up = await fetch('/api/upload', { method: 'POST', body: fd });
+      if (!up.ok) throw new Error('upload');
+      const { url } = await up.json();
 
-      await fetch('/api/users/profile', {
-        method:  'PATCH',
+      const res = await fetch('/api/users/profile', {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ ...profile, avatar: data.url }),
+        body: JSON.stringify({ avatar: url }),
       });
+      if (!res.ok) throw new Error('save');
 
-      setProfile(prev => ({ ...prev, avatar: data.url }));
-      await updateSession({ avatar: data.url });
-
-      toast.success('Profile photo updated!');
+      setProfile((p) => ({ ...p, avatar: url }));
+      await updateSession({ avatar: url });
+      toast.success('Photo updated');
     } catch {
-      toast.error('Failed to upload photo. Please try again.');
+      toast.error('Couldn’t update your photo. Please try again.');
     } finally {
       setUploadingAvatar(false);
-      e.target.value = '';
     }
   };
 
-  const handleSave = async e => {
-    e.preventDefault();
+  const usernameTooShort = profile.username.length > 0 && profile.username.length < 3;
+  const blockedByUsername = usernameTooShort || usernameAvailable === false || usernameChecking;
+
+  const handleSave = async (e) => {
+    e?.preventDefault();
+    if (!profile.name.trim()) { toast.error('Your name can’t be empty'); return; }
+    if (usernameTooShort) { toast.error('Usernames need at least 3 characters'); return; }
+    if (usernameAvailable === false) { toast.error('That username is taken'); return; }
+
     setSaving(true);
     try {
+      const body = {
+        name: profile.name.trim(),
+        phone: profile.phone.trim(),
+        bio: profile.bio.trim(),
+        location: profile.location,
+        skills: profile.skills,
+        username: profile.username,
+        socialLinks: Object.fromEntries(Object.entries(profile.socialLinks).map(([k, v]) => [k, v.trim()])),
+      };
       const res = await fetch('/api/users/profile', {
-        method:  'PATCH',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(profile),
+        body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (res.ok) {
-        toast.success('Profile updated!');
-        setSaved(true);
-        setTimeout(() => setSaved(false), 3000);
-      } else {
-        toast.error(data.error || 'Failed to update profile');
-      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(data.error || 'Couldn’t save your profile'); return; }
+
+      const next = { ...profile, ...body };
+      setProfile(next);
+      setSavedSnapshot(editable(next));
+      setSavedUsername(next.username);
+      setUsernameAvailable(null);
+      // Keep the name in the nav and menus in sync
+      if (body.name !== session?.user?.name) await updateSession({ name: body.name });
+      toast.success('Profile saved');
     } catch {
-      toast.error('Something went wrong');
+      toast.error('Something went wrong. Please try again.');
     } finally {
       setSaving(false);
     }
   };
 
+  const discard = () => {
+    if (!savedSnapshot) return;
+    const s = JSON.parse(savedSnapshot);
+    setProfile((p) => ({ ...p, ...s }));
+  };
+
+  /* ── profile strength (providers) ──────────────────────── */
+  const checks = isProvider ? [
+    ['Profile photo', !!profile.avatar],
+    ['Bio of 80+ characters', profile.bio.trim().length >= 80],
+    ['At least one service', profile.skills.length > 0],
+    ['Your area', !!profile.location],
+    ['Phone number', !!profile.phone.trim()],
+    ['A social link', Object.values(profile.socialLinks).some((v) => v.trim())],
+    ['ID verified', profile.verificationStatus === 'verified'],
+  ] : [
+    ['Profile photo', !!profile.avatar],
+    ['Your area', !!profile.location],
+    ['Phone number', !!profile.phone.trim()],
+  ];
+  const done = checks.filter(([, ok]) => ok).length;
+  const pct = Math.round((done / checks.length) * 100);
+
+  /* ── render ───────────────────────────────────────────── */
+
+  const shell = (children) => (
+    <div className="pf min-h-screen bg-[#080f0a] text-[#e9efe9] antialiased">
+      <style>{`
+        .pf { font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif; }
+        .serif { font-family: var(--font-serif), Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+        .mono { font-family: var(--font-mono), ui-monospace, monospace; }
+        .pf select option { background: #0b150e; color: #fff; }
+      `}</style>
+      {children}
+    </div>
+  );
+
   if (status === 'loading' || loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-[#080f0a]">
-        <div className="w-10 h-10 rounded-full border-2 border-green-500/20 border-t-green-500 animate-spin" />
+    return shell(
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="mono text-[11px] uppercase tracking-[0.18em] text-white/35">Loading profile…</p>
       </div>
     );
   }
 
-  const inputClass = "w-full px-4 py-3.5 rounded-xl text-sm outline-none transition placeholder-white/20";
-  const labelClass = "block text-xs font-semibold uppercase tracking-widest text-white/40 mb-2";
-
-  return (
-    <div className="min-h-screen bg-[#080f0a] relative overflow-x-hidden">
-      <style>{`
-        @keyframes fadeUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
-        @keyframes drift {
-          0%,100% { transform:translate(0,0) scale(1); }
-          33% { transform:translate(30px,-20px) scale(1.05); }
-          66% { transform:translate(-20px,15px) scale(0.97); }
-        }
-        .fade-up { animation: fadeUp 0.55s cubic-bezier(.22,1,.36,1) forwards; }
-        .drift { animation: drift 14s ease-in-out infinite; }
-        .d1{animation-delay:.05s} .d2{animation-delay:.1s} .d3{animation-delay:.15s}
-        .d4{animation-delay:.2s}  .d5{animation-delay:.25s} .d6{animation-delay:.3s}
-        .d7{animation-delay:.35s} .d8{animation-delay:.4s}
-        select option { background: #111; color: white; }
-      `}</style>
-
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-[-10%] right-[-5%] w-[500px] h-[500px] rounded-full drift"
-          style={{ background: 'radial-gradient(circle, rgba(22,163,74,0.12) 0%, transparent 70%)' }} />
-        <div className="absolute bottom-[-10%] left-[-5%] w-[400px] h-[400px] rounded-full drift"
-          style={{ background: 'radial-gradient(circle, rgba(16,185,129,0.1) 0%, transparent 70%)', animationDelay: '5s' }} />
-        <div className="absolute inset-0 opacity-[0.025]" style={{
-          backgroundImage: 'linear-gradient(rgba(255,255,255,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.8) 1px, transparent 1px)',
-          backgroundSize: '72px 72px',
-        }} />
+  if (loadFailed) {
+    return shell(
+      <div className="mx-auto flex min-h-screen max-w-5xl flex-col justify-center px-5 md:px-8">
+        <p className="serif text-5xl leading-none">Couldn’t load your profile.</p>
+        <button onClick={() => { setLoading(true); fetchProfile(); }}
+          className="mt-8 w-max border-b border-green-400 pb-0.5 text-[15px] text-white transition hover:text-green-400">
+          Try again
+        </button>
       </div>
+    );
+  }
 
-      <div className="relative max-w-2xl mx-auto px-4 py-12">
+  const vStatus = profile.verificationStatus;
 
-        <div className={`mb-8 opacity-0 ${visible ? 'fade-up' : ''}`}>
-          <p className="text-xs font-semibold uppercase tracking-widest text-green-400/60 mb-2">Account</p>
-          <h1 className="text-3xl font-bold text-white mb-1">My Profile</h1>
-          <p className="text-white/35 text-sm">
-            Keep your profile updated to attract more {session?.user?.role === 'client' ? 'quality providers' : 'clients and jobs'}.
+  return shell(
+    <div className="mx-auto max-w-6xl px-5 pb-40 pt-10 md:px-8 md:pt-16">
+
+      {/* ─── Header ─── */}
+      <header className="mb-14 grid gap-8 md:grid-cols-[auto_1fr] md:items-end md:gap-10">
+        <label className="group relative block h-28 w-28 cursor-pointer md:h-32 md:w-32">
+          <div className="h-full w-full overflow-hidden rounded-full bg-green-400">
+            {profile.avatar
+              ? <img src={profile.avatar} alt={profile.name} className="h-full w-full object-cover" />
+              : <div className="serif flex h-full w-full items-center justify-center text-6xl text-[#080f0a]">{(profile.name || session?.user?.name)?.charAt(0).toUpperCase()}</div>}
+          </div>
+          <div className={`absolute inset-0 flex items-center justify-center rounded-full bg-black/55 transition ${uploadingAvatar ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+            {uploadingAvatar ? <Loader2 size={20} className="animate-spin text-white" /> : <span className="mono text-[10px] uppercase tracking-[0.14em] text-white">Change</span>}
+          </div>
+          <span className="mono absolute -bottom-2 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border border-white/15 bg-[#080f0a] px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-white/60 md:hidden">
+            Change photo
+          </span>
+          <input type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} disabled={uploadingAvatar} />
+        </label>
+
+        <div className="min-w-0">
+          <p className="mono mb-4 text-[11px] uppercase tracking-[0.16em] text-white/40">
+            {isProvider ? 'Provider account' : `${role} account`} · {profile.email}
           </p>
-        </div>
-
-        <div className={`flex items-center gap-5 p-5 rounded-2xl mb-6 opacity-0 ${visible ? 'fade-up d1' : ''}`}
-          style={{ background: 'linear-gradient(135deg, rgba(22,163,74,0.15) 0%, rgba(5,150,105,0.1) 100%)', border: '1px solid rgba(74,222,128,0.2)' }}>
-          <label className="relative shrink-0 cursor-pointer group">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-white text-2xl font-bold overflow-hidden"
-              style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 20px rgba(22,163,74,0.3)' }}>
-              {profile.avatar
-                ? <img src={profile.avatar} alt={profile.name} className="w-full h-full object-cover" />
-                : session?.user?.name?.charAt(0).toUpperCase()
-              }
-            </div>
-            <div className="absolute inset-0 rounded-2xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
-              style={{ background: 'rgba(0,0,0,0.5)' }}>
-              {uploadingAvatar ? <Loader2 size={18} className="text-white animate-spin" /> : <Camera size={18} className="text-white" />}
-            </div>
-            <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-400 rounded-full" style={{ border: '2px solid #080f0a' }} />
-            <input type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} disabled={uploadingAvatar} />
-          </label>
-
-          <div className="min-w-0 flex-1">
-            <p className="text-lg font-bold text-white truncate inline-flex items-center gap-1.5">
-              {session?.user?.name}
-              {profile.verificationStatus === 'verified' && <VerifiedBadge size={16} />}
-            </p>
-            <p className="text-white/40 text-sm truncate">{session?.user?.email}</p>
-            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full capitalize"
-                style={{ background: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.25)' }}>
-                {session?.user?.role}
-              </span>
-              {session?.user?.role === 'provider' && profile.verificationStatus !== 'verified' && (
-                <a href="/verification" className="text-xs font-semibold px-2.5 py-0.5 rounded-full transition hover:brightness-110"
-                  style={{ background: 'rgba(250,204,21,0.12)', color: '#facc15', border: '1px solid rgba(250,204,21,0.25)' }}>
-                  {profile.verificationStatus === 'pending' ? 'Verification pending' : 'Get verified →'}
-                </a>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className={`p-5 rounded-2xl mb-4 opacity-0 ${visible ? 'fade-up d1' : ''}`}
-          style={{ background: 'rgba(74,222,128,0.06)', border: '1px solid rgba(74,222,128,0.15)' }}>
-          <div className="flex items-center gap-2 mb-3">
-            <Link2 size={14} className="text-green-400" />
-            <p className="text-sm font-semibold text-white">Your Shareable Profile Link</p>
-          </div>
-          <p className="text-xs text-white/40 mb-3">
-            Share this link on WhatsApp, Instagram bio, or anywhere — clients can see your full profile, skills, and reviews.
-          </p>
-          <div className="flex items-center gap-2">
-            <div className="flex-1 px-3 py-2.5 rounded-xl text-xs font-mono truncate"
-              style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', color: '#4ade80' }}>
-              {shareableLink}
-            </div>
-            <button onClick={copyLink}
-              className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition shrink-0"
-              style={{ background: copied ? 'rgba(74,222,128,0.2)' : 'rgba(74,222,128,0.1)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.25)' }}>
-              {copied ? <><Check size={13} /> Copied!</> : <><Copy size={13} /> Copy</>}
-            </button>
-          </div>
-        </div>
-
-        <form onSubmit={handleSave} className="space-y-4">
-
-          <div className={`opacity-0 ${visible ? 'fade-up d2' : ''}`}>
-            <Section icon={User} title="Basic Information">
-              <div className="space-y-4">
-                <div>
-                  <label className={labelClass}>Full Name</label>
-                  <input type="text" name="name" value={profile.name} onChange={handleChange}
-                    className={inputClass} style={inputStyle} onFocus={onFocus} onBlur={onBlur} />
-                </div>
-                <div>
-                  <label className={labelClass}>Email</label>
-                  <input type="email" value={profile.email} disabled
-                    className={`${inputClass} opacity-40 cursor-not-allowed`} style={inputStyle} />
-                  <p className="text-xs text-white/20 mt-1.5">Email cannot be changed</p>
-                </div>
-
-                <div>
-                  <label className={labelClass}>Custom Username</label>
-                  <div className="flex items-center gap-0 rounded-xl overflow-hidden"
-                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}>
-                    <span className="px-3 py-3.5 text-sm text-white/30 shrink-0 border-r" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-                      100gigs.com/u/
-                    </span>
-                    <input
-                      type="text"
-                      name="username"
-                      value={profile.username}
-                      onChange={e => {
-                        const val = e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '');
-                        setProfile(prev => ({ ...prev, username: val }));
-                        setUsernameAvailable(null);
-                      }}
-                      placeholder="your-name"
-                      maxLength={30}
-                      className="flex-1 px-3 py-3.5 text-sm bg-transparent outline-none text-white placeholder-white/20"
-                    />
-                    <div className="px-3">
-                      {usernameChecking && <Loader2 size={14} className="animate-spin text-white/30" />}
-                      {!usernameChecking && usernameAvailable === true && <Check size={14} className="text-green-400" />}
-                      {!usernameChecking && usernameAvailable === false && <span className="text-red-400 text-xs">Taken</span>}
-                    </div>
-                  </div>
-                  <p className="text-xs text-white/20 mt-1.5">
-                    Letters, numbers, hyphens and underscores only · 3–30 characters
-                  </p>
-                  {usernameAvailable === false && (
-                    <p className="text-xs text-red-400 mt-1">This username is taken. Try another.</p>
-                  )}
-                  {usernameAvailable === true && (
-                    <p className="text-xs text-green-400 mt-1">✓ Username is available!</p>
-                  )}
-                </div>
-              </div>
-            </Section>
-          </div>
-
-          <div className={`opacity-0 ${visible ? 'fade-up d3' : ''}`}>
-            <Section icon={Phone} title="Contact & Location">
-              <div className="space-y-4">
-                <div>
-                  <label className={labelClass}>Phone Number</label>
-                  <input type="tel" name="phone" value={profile.phone} onChange={handleChange}
-                    placeholder="08012345678" className={inputClass} style={inputStyle}
-                    onFocus={onFocus} onBlur={onBlur} />
-                </div>
-                <div>
-                  <label className={labelClass}>Location in PH</label>
-                  <select name="location" value={profile.location} onChange={handleChange}
-                    className={`${inputClass} cursor-pointer`} style={inputStyle}
-                    onFocus={onFocus} onBlur={onBlur}>
-                    <option value="">Select your area</option>
-                    {LOCATIONS.map(loc => <option key={loc} value={loc}>{loc}</option>)}
-                  </select>
-                </div>
-              </div>
-            </Section>
-          </div>
-
-          <div className={`opacity-0 ${visible ? 'fade-up d4' : ''}`}>
-            <Section icon={Briefcase} title="About You">
-              <label className={labelClass}>Bio</label>
-              <textarea name="bio" value={profile.bio} onChange={handleChange} rows={4}
-                placeholder="Tell clients about your experience, what makes you the best choice..."
-                className={`${inputClass} resize-none`} style={inputStyle}
-                onFocus={onFocus} onBlur={onBlur} />
-              <div className="flex justify-between mt-2">
-                <p className="text-xs text-white/20">{profile.bio.length} characters</p>
-                {profile.bio.length > 50 && <p className="text-xs text-green-400">Good profile bio!</p>}
-              </div>
-            </Section>
-          </div>
-
-          {session?.user?.role === 'provider' && (
-            <div className={`opacity-0 ${visible ? 'fade-up d5' : ''}`}>
-              <Section icon={Briefcase} title="Your Skills">
-                <p className="text-xs text-white/30 mb-4">Select all services you can provide</p>
-                <div className="flex flex-wrap gap-2">
-                  {SKILLS.map(skill => {
-                    const active = profile.skills.includes(skill);
-                    return (
-                      <button key={skill} type="button" onClick={() => toggleSkill(skill)}
-                        className="px-3.5 py-2 rounded-xl text-xs font-medium transition-all"
-                        style={{
-                          background:  active ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.05)',
-                          border:      active ? '1px solid rgba(74,222,128,0.35)' : '1px solid rgba(255,255,255,0.08)',
-                          color:       active ? '#4ade80' : 'rgba(255,255,255,0.45)',
-                          transform:   active ? 'scale(1.03)' : 'scale(1)',
-                        }}>
-                        {skill}
-                      </button>
-                    );
-                  })}
-                </div>
-                {profile.skills.length > 0 && (
-                  <p className="text-xs text-green-400 mt-4 font-medium">
-                    {profile.skills.length} skill{profile.skills.length > 1 ? 's' : ''} selected
-                  </p>
-                )}
-              </Section>
-            </div>
+          <h1 className="serif flex flex-wrap items-center gap-3 text-5xl leading-[0.95] md:text-7xl">
+            <span className="truncate">{profile.name || 'Your profile'}</span>
+            {vStatus === 'verified' && <VerifiedBadge size={24} />}
+          </h1>
+          {isProvider && vStatus !== 'verified' && (
+            <Link href="/verification" className="mt-5 inline-flex items-center gap-1.5 text-[13px] text-amber-300 hover:underline underline-offset-4">
+              {vStatus === 'pending' ? 'ID check under review' : vStatus === 'rejected' ? 'ID check needs attention' : 'Get your verified badge'}
+              <ArrowUpRight size={13} />
+            </Link>
           )}
+        </div>
+      </header>
 
-          <div className={`opacity-0 ${visible ? 'fade-up d6' : ''}`}>
-            <div className="p-6 rounded-2xl" style={glass}>
-              <div className="flex items-center gap-2.5 mb-2">
-                <div className="w-7 h-7 rounded-lg flex items-center justify-center"
-                  style={{ background: 'rgba(74,222,128,0.12)' }}>
-                  <Link2 size={14} className="text-green-400" />
-                </div>
-                <p className="text-sm font-semibold text-white">Social & Contact Links</p>
+      <div className="grid gap-16 lg:grid-cols-[1fr_320px] lg:gap-16">
+
+        {/* ─── Form ─── */}
+        <form onSubmit={handleSave} className="min-w-0 space-y-14" noValidate>
+          <Section n={1} title="The basics">
+            <div className="grid gap-8 sm:grid-cols-2">
+              <div>
+                <label htmlFor="name" className={label}>Full name</label>
+                <input id="name" value={profile.name} onChange={(e) => set('name', e.target.value)}
+                  autoComplete="name" maxLength={60} className={input} />
               </div>
-              <p className="text-xs text-white/30 mb-5 ml-9">
-                Add your socials so clients can verify your work and reach you on their preferred platform. These show on your public profile.
-              </p>
+              <div>
+                <label className={label}>Email</label>
+                <p className="border-b border-white/[0.07] pb-3 text-[16px] text-white/40">{profile.email}</p>
+                <p className="mt-2 text-[12px] text-white/25">Email can’t be changed.</p>
+              </div>
+            </div>
 
-              <div className="space-y-3">
-                {SOCIAL_PLATFORMS.map(platform => {
-                  const value = profile.socialLinks[platform.key] || '';
-                  const hasValue = value.trim() !== '';
+            <div className="mt-8">
+              <label htmlFor="username" className={label}>Profile link</label>
+              <div className={`flex items-baseline border-b pb-3 transition-colors focus-within:border-green-400 ${
+                usernameAvailable === false || usernameTooShort ? 'border-red-400/70' : 'border-white/15'}`}>
+                <span className="mono shrink-0 text-[14px] text-white/30">100gigs.com/u/</span>
+                <input id="username" value={profile.username} maxLength={30} placeholder="your-name"
+                  autoCapitalize="none" autoCorrect="off" spellCheck={false}
+                  onChange={(e) => set('username', e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
+                  className="mono min-w-0 flex-1 bg-transparent text-[16px] text-white outline-none placeholder:text-white/20" />
+                <span className="ml-3 w-14 shrink-0 text-right text-[12px]">
+                  {usernameChecking && <Loader2 size={14} className="ml-auto animate-spin text-white/30" />}
+                  {!usernameChecking && usernameAvailable === true && <span className="text-green-400">Free</span>}
+                  {!usernameChecking && usernameAvailable === false && <span className="text-red-300">Taken</span>}
+                </span>
+              </div>
+              <p className={`mt-2 text-[12px] ${usernameTooShort || usernameAvailable === false ? 'text-red-300' : 'text-white/30'}`}>
+                {usernameTooShort ? 'At least 3 characters.'
+                  : usernameAvailable === false ? 'Someone has that one. Try adding your trade or area.'
+                  : 'Letters, numbers, - and _ · 3–30 characters. Easy to type is best.'}
+              </p>
+            </div>
+          </Section>
+
+          <Section n={2} title="Contact and area" hint="Clients use your area to judge distance.">
+            <div className="grid gap-8 sm:grid-cols-2">
+              <div>
+                <label htmlFor="phone" className={label}>Phone number</label>
+                <input id="phone" type="tel" inputMode="tel" autoComplete="tel" value={profile.phone}
+                  onChange={(e) => set('phone', e.target.value)} placeholder="0801 234 5678"
+                  className={`${input} mono`} />
+              </div>
+              <div>
+                <label htmlFor="location" className={label}>Area</label>
+                <select id="location" value={profile.location} onChange={(e) => set('location', e.target.value)}
+                  className={`${input} ${profile.location ? '' : 'text-white/30'}`}>
+                  <option value="">Choose your area</option>
+                  {LOCATIONS.map((l) => <option key={l} value={l}>{l}</option>)}
+                  {profile.location && !LOCATIONS.includes(profile.location) && (
+                    <option value={profile.location}>{profile.location}</option>
+                  )}
+                </select>
+              </div>
+            </div>
+          </Section>
+
+          <Section n={3} title="About you"
+            hint={isProvider ? 'How long you’ve done this, what you’re best at, and why clients come back.' : 'A line or two so providers know who they’re working with.'}>
+            <textarea id="bio" value={profile.bio} onChange={(e) => set('bio', e.target.value)} rows={5} maxLength={1000}
+              placeholder={isProvider ? 'e.g. Electrician for 8 years. I handle wiring, inverter installs and prepaid meters across Rumuola and GRA. I show up on time and clean up after.' : ''}
+              className={`${input} resize-none leading-relaxed`} />
+            <div className="mt-2 flex justify-between text-[12px]">
+              <span className={isProvider && profile.bio.trim().length >= 80 ? 'text-green-400' : 'text-white/30'}>
+                {isProvider && (profile.bio.trim().length >= 80 ? 'Good length.' : `Aim for 80+ characters.`)}
+              </span>
+              <span className="mono text-white/25">{profile.bio.length}/1000</span>
+            </div>
+          </Section>
+
+          {isProvider && (
+            <Section n={4} title="Your services" hint="Pick everything you can do. You’ll show up when clients browse these.">
+              <div className="flex flex-wrap gap-2">
+                {SKILLS.map((skill) => {
+                  const on = profile.skills.includes(skill);
                   return (
-                    <div key={platform.key}>
-                      <label className="block text-xs font-medium text-white/40 mb-1.5">
-                        <span className="mr-1.5">{platform.icon}</span>
-                        {platform.label}
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={value}
-                          onChange={e => handleSocialChange(platform.key, e.target.value)}
-                          placeholder={platform.placeholder}
-                          className={`${inputClass} flex-1`}
-                          style={inputStyle}
-                          onFocus={onFocus}
-                          onBlur={onBlur}
-                        />
-                        {hasValue && (
-                          <a
-                            href={platform.buildUrl(value)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="px-3 py-3.5 rounded-xl text-xs font-medium transition shrink-0"
-                            style={{ background: 'rgba(74,222,128,0.1)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.2)' }}
-                            title={`Open ${platform.label}`}
-                          >
-                            ↗
-                          </a>
-                        )}
-                      </div>
-                      <p className="text-xs text-white/20 mt-1 ml-1">{platform.hint}</p>
-                    </div>
+                    <button key={skill} type="button" onClick={() => toggleSkill(skill)} aria-pressed={on}
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-4 py-2 text-[13px] transition ${
+                        on ? 'border-green-400 bg-green-400 text-[#080f0a]' : 'border-white/15 text-white/65 hover:border-white/40 hover:text-white'}`}>
+                      {on && <Check size={13} strokeWidth={2.5} />}{skill}
+                    </button>
                   );
                 })}
               </div>
+            </Section>
+          )}
+
+          <Section n={isProvider ? 5 : 4} title="Social links" hint="These appear on your public profile so clients can see your past work.">
+            <div className="grid gap-x-8 gap-y-7 sm:grid-cols-2">
+              {SOCIAL_PLATFORMS.map((p) => {
+                const value = profile.socialLinks[p.key] || '';
+                const url = socialUrl(p, value);
+                const invalid = value.trim() && !url;
+                return (
+                  <div key={p.key}>
+                    <label htmlFor={`s-${p.key}`} className={label}>{p.label}</label>
+                    <div className={`flex items-baseline border-b pb-3 transition-colors focus-within:border-green-400 ${invalid ? 'border-red-400/70' : 'border-white/15'}`}>
+                      <input id={`s-${p.key}`} value={value} onChange={(e) => setSocial(p.key, e.target.value)}
+                        placeholder={p.placeholder} autoCapitalize="none" autoCorrect="off" spellCheck={false}
+                        className="min-w-0 flex-1 bg-transparent text-[15px] text-white outline-none placeholder:text-white/20" />
+                      {url && (
+                        <a href={url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${p.label}`}
+                          className="ml-2 text-white/30 transition hover:text-green-400">
+                          <ArrowUpRight size={15} />
+                        </a>
+                      )}
+                    </div>
+                    <p className={`mt-2 text-[12px] ${invalid ? 'text-red-300' : 'text-white/25'}`}>
+                      {invalid ? `That link isn’t a ${p.label} link.` : p.hint || '\u00a0'}
+                    </p>
+                  </div>
+                );
+              })}
             </div>
+          </Section>
+        </form>
+
+        {/* ─── Side ─── */}
+        <aside className="space-y-10 lg:sticky lg:top-8 lg:self-start">
+          <div className="border border-white/10 bg-[#0b150e] p-6">
+            <p className={label}>Your public profile</p>
+            <p className="mono break-all text-[13px] text-green-400">{shareableLink.replace(/^https?:\/\//, '')}</p>
+            <p className="mt-3 text-[13px] leading-relaxed text-white/45">
+              Put it in your WhatsApp status and Instagram bio. Clients see your services and reviews.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-2">
+              <button onClick={shareLink}
+                className="inline-flex items-center gap-2 rounded-full bg-green-400 px-4 py-2 text-[13px] font-medium text-[#080f0a] transition hover:bg-green-300">
+                {copied ? <><Check size={14} /> Copied</> : <><Share2 size={14} /> Share link</>}
+              </button>
+              <Link href={publicPath}
+                className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-4 py-2 text-[13px] text-white/75 transition hover:border-white/40 hover:text-white">
+                View <ArrowUpRight size={13} />
+              </Link>
+            </div>
+            {dirty && <p className="mt-4 text-[12px] text-amber-200/70">Save first to see your changes on it.</p>}
           </div>
 
-          <div className={`opacity-0 ${visible ? 'fade-up d8' : ''}`}>
-            <button type="submit" disabled={saving || usernameAvailable === false}
-              className="w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-semibold text-white transition-all active:scale-[0.99] disabled:opacity-50 group"
-              style={{
-                background:  saved ? 'linear-gradient(135deg,#059669,#047857)' : 'linear-gradient(135deg,#16a34a,#15803d)',
-                boxShadow:   saved ? '0 4px 24px rgba(5,150,105,0.35)' : '0 4px 24px rgba(22,163,74,0.35)',
-              }}>
-              {saving  ? <><Loader2 size={18} className="animate-spin" /> Saving...</>
-              : saved  ? <><CheckCircle size={18} /> Saved!</>
-              : <><Save size={18} /> Save Profile <ArrowRight size={16} className="group-hover:translate-x-0.5 transition-transform" /></>}
+          <div>
+            <div className="mb-3 flex items-baseline justify-between">
+              <p className="mono text-[10px] uppercase tracking-[0.16em] text-white/35">Profile strength</p>
+              <p className={`mono text-[13px] ${pct === 100 ? 'text-green-400' : 'text-white/60'}`}>{pct}%</p>
+            </div>
+            <div className="h-px w-full bg-white/10">
+              <div className="h-px bg-green-400 transition-all duration-500" style={{ width: `${pct}%` }} />
+            </div>
+            <ul className="mt-5 space-y-2.5">
+              {checks.map(([text, ok]) => (
+                <li key={text} className={`flex items-center gap-3 text-[13px] ${ok ? 'text-white/40 line-through decoration-white/20' : 'text-white/75'}`}>
+                  <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${ok ? 'border-green-400 bg-green-400' : 'border-white/20'}`}>
+                    {ok && <Check size={10} strokeWidth={3} className="text-[#080f0a]" />}
+                  </span>
+                  {text}
+                </li>
+              ))}
+            </ul>
+            {isProvider && pct < 100 && (
+              <p className="mt-5 text-[12px] leading-relaxed text-white/35">Complete profiles get hired more often.</p>
+            )}
+          </div>
+        </aside>
+      </div>
+
+      {/* ─── Save bar (sits above the bottom nav) ─── */}
+      <div className={`fixed inset-x-0 bottom-24 z-40 px-4 transition-all duration-300 ${dirty || saving ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-4 opacity-0'}`}>
+        <div className="mx-auto flex max-w-[480px] items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#0b150e]/95 py-2.5 pl-5 pr-2.5 shadow-[0_12px_40px_rgba(0,0,0,0.55)] backdrop-blur">
+          <p className="text-[13px] text-white/70">Unsaved changes</p>
+          <div className="flex items-center gap-1">
+            <button type="button" onClick={discard} disabled={saving}
+              className="rounded-full px-3 py-2 text-[13px] text-white/50 transition hover:text-white disabled:opacity-40">
+              Discard
+            </button>
+            <button type="button" onClick={handleSave} disabled={saving || blockedByUsername}
+              className="inline-flex items-center gap-2 rounded-full bg-green-400 px-5 py-2 text-[13px] font-medium text-[#080f0a] transition hover:bg-green-300 disabled:bg-white/[0.08] disabled:text-white/35">
+              {saving ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : 'Save'}
             </button>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   );
