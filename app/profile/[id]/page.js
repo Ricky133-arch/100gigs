@@ -1,49 +1,74 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { MapPin, Phone, Briefcase, Star, ArrowLeft, Link2, Copy, Check, ExternalLink } from 'lucide-react';
+import { useSession } from 'next-auth/react';
+import Link from 'next/link';
+import { ArrowLeft, ArrowRight, ArrowUpRight, Check, Share2 } from 'lucide-react';
 import VerifiedBadge from '@/components/VerifiedBadge';
 import { toast } from 'sonner';
 
-const glass = {
-  background:          'rgba(255,255,255,0.04)',
-  border:              '1px solid rgba(255,255,255,0.08)',
-  backdropFilter:      'blur(12px)',
-  WebkitBackdropFilter:'blur(12px)',
-};
+/* ── social links ────────────────────────────────────────── */
 
+// Only link to the platform's own site. A full URL is accepted only if it
+// points at that platform, so a profile can't disguise a scam link as "Instagram".
 const SOCIAL_PLATFORMS = [
-  { key: 'instagram', label: 'Instagram', icon: '📸', buildUrl: (v) => v.startsWith('http') ? v : `https://www.instagram.com/${v.replace('@', '')}/?hl=en`, color: '#e1306c' },
-  { key: 'facebook',  label: 'Facebook',  icon: '👥', buildUrl: (v) => v.startsWith('http') ? v : `https://www.facebook.com/${v}`,                          color: '#1877f2' },
-  { key: 'twitter',   label: 'X',         icon: '𝕏',  buildUrl: (v) => v.startsWith('http') ? v : `https://www.x.com/${v.replace('@', '')}`,               color: '#ffffff' },
-  { key: 'tiktok',    label: 'TikTok',    icon: '🎵', buildUrl: (v) => v.startsWith('http') ? v : `https://www.tiktok.com/@${v.replace('@', '')}`,          color: '#ff0050' },
-  { key: 'linkedin',  label: 'LinkedIn',  icon: '💼', buildUrl: (v) => v.startsWith('http') ? v : `https://www.linkedin.com/in/${v}`,                       color: '#0a66c2' },
-  { key: 'youtube',   label: 'YouTube',   icon: '▶️', buildUrl: (v) => v.startsWith('http') ? v : `https://www.youtube.com/@${v.replace('@', '')}`,         color: '#ff0000' },
+  { key: 'instagram', label: 'Instagram', hosts: ['instagram.com'], build: (h) => `https://www.instagram.com/${h}/` },
+  { key: 'facebook', label: 'Facebook', hosts: ['facebook.com', 'fb.com'], build: (h) => `https://www.facebook.com/${h}` },
+  { key: 'twitter', label: 'X', hosts: ['x.com', 'twitter.com'], build: (h) => `https://x.com/${h}` },
+  { key: 'tiktok', label: 'TikTok', hosts: ['tiktok.com'], build: (h) => `https://www.tiktok.com/@${h}` },
+  { key: 'linkedin', label: 'LinkedIn', hosts: ['linkedin.com'], build: (h) => `https://www.linkedin.com/in/${h}` },
+  { key: 'youtube', label: 'YouTube', hosts: ['youtube.com', 'youtu.be'], build: (h) => `https://www.youtube.com/@${h}` },
 ];
 
-function StarDisplay({ rating, size = 16 }) {
+function socialUrl(platform, raw) {
+  const v = String(raw || '').trim();
+  if (!v) return null;
+  if (/^https?:\/\//i.test(v)) {
+    try {
+      const host = new URL(v).hostname.replace(/^www\.|^m\./, '');
+      return platform.hosts.some((h) => host === h || host.endsWith(`.${h}`)) ? v : null;
+    } catch { return null; }
+  }
+  const handle = v.replace(/^@/, '').replace(/[^\w.\-]/g, '');
+  return handle ? platform.build(handle) : null;
+}
+
+/* ── helpers ─────────────────────────────────────────────── */
+
+function Stars({ rating, className = 'text-[15px]' }) {
+  const r = Math.round(rating || 0);
   return (
-    <div className="flex gap-0.5">
-      {[1,2,3,4,5].map(star => (
-        <Star key={star} size={size}
-          style={{
-            color: star <= Math.round(rating) ? '#fbbf24' : 'rgba(255,255,255,0.1)',
-            fill:  star <= Math.round(rating) ? '#fbbf24' : 'transparent',
-          }} />
+    <span className={`tracking-[0.1em] ${className}`} aria-label={`${rating} out of 5`}>
+      {[1, 2, 3, 4, 5].map((s) => (
+        <span key={s} className={s <= r ? 'text-amber-300' : 'text-white/15'}>★</span>
       ))}
-    </div>
+    </span>
   );
 }
 
-export default function PublicProfile() {
-  const { id }   = useParams();
-  const router   = useRouter();
-  const [user,         setUser]        = useState(null);
-  const [ratingsData,  setRatingsData] = useState({ ratings: [], average: 0, total: 0 });
-  const [loading,      setLoading]     = useState(true);
-  const [copied,       setCopied]      = useState(false);
+const fmtAvg = (n) => (Number.isFinite(Number(n)) ? Number(n).toFixed(1) : '0.0');
+const fmtDate = (d) => new Date(d).toLocaleDateString('en-NG', { month: 'short', year: 'numeric' });
 
-  useEffect(() => { fetchProfile(); fetchRatings(); }, [id]);
+/* ── page ────────────────────────────────────────────────── */
+
+export default function PublicProfile() {
+  const { id } = useParams();
+  const router = useRouter();
+  const { data: session } = useSession();
+
+  const [user, setUser] = useState(null);
+  const [ratingsData, setRatingsData] = useState({ ratings: [], average: 0, total: 0 });
+  const [loading, setLoading] = useState(true);
+  const [copied, setCopied] = useState(false);
+  const [showPhone, setShowPhone] = useState(false);
+  const [showAllReviews, setShowAllReviews] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    setShowPhone(false);
+    fetchProfile();
+    fetchRatings();
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchProfile = async () => {
     try {
@@ -52,6 +77,7 @@ export default function PublicProfile() {
       setUser(await res.json());
     } catch (err) {
       console.error(err);
+      setUser(null);
     } finally {
       setLoading(false);
     }
@@ -60,279 +86,269 @@ export default function PublicProfile() {
   const fetchRatings = async () => {
     try {
       const res = await fetch(`/api/ratings/${id}`);
-      if (res.ok) setRatingsData(await res.json());
-    } catch (err) {
-      console.error(err);
+      if (res.ok) {
+        const data = await res.json();
+        setRatingsData({ ratings: data.ratings || [], average: data.average || 0, total: data.total || 0 });
+      }
+    } catch (err) { console.error(err); }
+  };
+
+  // Use the phone's share sheet when available (WhatsApp etc.), otherwise copy
+  const share = async () => {
+    const url = window.location.href;
+    const title = `${user?.name} on 100Gigs`;
+    if (navigator.share) {
+      try { await navigator.share({ title, text: `${title} — hire skilled hands in Port Harcourt`, url }); return; }
+      catch (e) { if (e?.name === 'AbortError') return; }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      toast.success('Link copied');
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error('Couldn’t copy. Copy the link from your address bar.');
     }
   };
 
-  const copyLink = async () => {
-    const link = window.location.href;
-    await navigator.clipboard.writeText(link);
-    setCopied(true);
-    toast.success('Profile link copied!');
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const goBack = () => (window.history.length > 1 ? router.back() : router.push('/'));
 
-  // Collect only filled social links
-  const activeSocials = user
-    ? SOCIAL_PLATFORMS.filter(p => user.socialLinks?.[p.key]?.trim())
-    : [];
-
-  if (loading) return (
-    <div className="min-h-screen bg-[#080f0a] flex items-center justify-center">
-      <div className="w-10 h-10 rounded-full border-2 border-green-500/20 border-t-green-500 animate-spin" />
-    </div>
-  );
-
-  if (!user) return (
-    <div className="min-h-screen bg-[#080f0a] flex flex-col items-center justify-center gap-4">
-      <p className="text-white/40 text-sm">Profile not found.</p>
-      <button onClick={() => router.back()}
-        className="text-green-400 text-sm hover:text-green-300 transition flex items-center gap-1.5">
-        <ArrowLeft size={14} /> Go back
-      </button>
-    </div>
-  );
-
-  return (
-    <div className="min-h-screen bg-[#080f0a] relative overflow-x-hidden">
+  const shell = (children) => (
+    <div className="pp min-h-screen bg-[#080f0a] text-[#e9efe9] antialiased">
       <style>{`
-        @keyframes drift {
-          0%,100% { transform:translate(0,0) scale(1); }
-          33% { transform:translate(30px,-20px) scale(1.05); }
-          66% { transform:translate(-20px,15px) scale(0.97); }
-        }
-        .drift { animation: drift 14s ease-in-out infinite; }
+        .pp { font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif; }
+        .serif { font-family: var(--font-serif), Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+        .mono { font-family: var(--font-mono), ui-monospace, monospace; }
       `}</style>
+      {children}
+    </div>
+  );
 
-      {/* Orbs */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-[-10%] right-[-5%] w-[500px] h-[500px] rounded-full drift"
-          style={{ background: 'radial-gradient(circle, rgba(22,163,74,0.12) 0%, transparent 70%)' }} />
-        <div className="absolute bottom-[-10%] left-[-5%] w-[400px] h-[400px] rounded-full drift"
-          style={{ background: 'radial-gradient(circle, rgba(16,185,129,0.1) 0%, transparent 70%)', animationDelay: '5s' }} />
-        <div className="absolute inset-0 opacity-[0.025]" style={{
-          backgroundImage: 'linear-gradient(rgba(255,255,255,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.8) 1px, transparent 1px)',
-          backgroundSize: '72px 72px',
-        }} />
+  if (loading) {
+    return shell(
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="mono text-[11px] uppercase tracking-[0.18em] text-white/35">Loading profile…</p>
       </div>
+    );
+  }
 
-      <div className="relative max-w-2xl mx-auto px-4 py-10 space-y-4">
+  if (!user) {
+    return shell(
+      <div className="mx-auto flex min-h-screen max-w-5xl flex-col justify-center px-5 md:px-8">
+        <p className="serif text-5xl leading-none">This profile isn’t here.</p>
+        <p className="mt-4 max-w-sm text-[15px] text-white/50">The account may have been removed, or the link is wrong.</p>
+        <Link href="/"
+          className="mt-8 inline-flex w-max items-center gap-2 rounded-full bg-green-400 px-6 py-3 text-[14px] font-medium text-[#080f0a] transition hover:bg-green-300">
+          Go to 100Gigs <ArrowRight size={15} />
+        </Link>
+      </div>
+    );
+  }
 
-        {/* Back */}
-        <button onClick={() => router.back()}
-          className="flex items-center gap-1.5 text-xs font-medium text-white/35 hover:text-green-400 transition mb-2">
-          <ArrowLeft size={14} /> Back
-        </button>
+  const isSelf = session?.user?.id === user._id || session?.user?.id === id;
+  const isVerified = user.verificationStatus === 'verified';
+  const firstName = user.name?.split(' ')[0];
+  const socials = SOCIAL_PLATFORMS
+    .map((p) => ({ ...p, url: socialUrl(p, user.socialLinks?.[p.key]) }))
+    .filter((p) => p.url);
+  const reviews = showAllReviews ? ratingsData.ratings : ratingsData.ratings.slice(0, 5);
+  const telHref = user.phone ? `tel:${String(user.phone).replace(/[^\d+]/g, '')}` : null;
+  const chatHref = `/chat?to=${user._id || id}&name=${encodeURIComponent(user.name || '')}`;
 
-        {/* Profile header */}
-        <div className="p-6 rounded-3xl" style={glass}>
-          <div className="flex items-start gap-5">
-            {/* Avatar */}
-            <div className="relative shrink-0">
-              <div className="w-[72px] h-[72px] rounded-2xl flex items-center justify-center text-white text-2xl font-bold overflow-hidden"
-                style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 20px rgba(22,163,74,0.3)' }}>
-                {user.avatar
-                  ? <img src={user.avatar} alt={user.name} className="w-full h-full object-cover" />
-                  : user.name?.charAt(0).toUpperCase()
-                }
-              </div>
-              <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-400 rounded-full"
-                style={{ border: '2px solid #080f0a' }} />
-            </div>
+  return shell(
+    <div className="mx-auto max-w-5xl px-5 pb-20 pt-8 md:px-8 md:pt-12">
+      <button onClick={goBack}
+        className="mb-10 inline-flex items-center gap-1.5 text-[13px] text-white/45 transition hover:text-white">
+        <ArrowLeft size={14} /> Back
+      </button>
 
-            {/* Info */}
-            <div className="flex-1 min-w-0">
-              <h1 className="text-xl font-bold text-white truncate inline-flex items-center gap-2">
-                {user.name}
-                {user.verificationStatus === 'verified' && <VerifiedBadge size={18} />}
-              </h1>
-              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full capitalize inline-block mt-1"
-                style={{ background: 'rgba(74,222,128,0.12)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.2)' }}>
-                {user.role}
-              </span>
+      {/* ─── Header ─── */}
+      <header className="mb-14 grid gap-8 border-b border-white/10 pb-12 md:grid-cols-[auto_1fr] md:items-end md:gap-10">
+        <div className="h-28 w-28 overflow-hidden rounded-full bg-green-400 md:h-36 md:w-36">
+          {user.avatar
+            ? <img src={user.avatar} alt={user.name} className="h-full w-full object-cover" />
+            : <div className="serif flex h-full w-full items-center justify-center text-6xl text-[#080f0a]">{user.name?.charAt(0).toUpperCase()}</div>}
+        </div>
 
-              {/* Rating */}
-              {ratingsData.total > 0 && (
-                <div className="flex items-center gap-2 mt-3">
-                  <StarDisplay rating={ratingsData.average} size={14} />
-                  <span className="text-sm font-semibold text-white">{ratingsData.average}</span>
-                  <span className="text-xs text-white/30">({ratingsData.total} review{ratingsData.total !== 1 ? 's' : ''})</span>
-                </div>
-              )}
-
-              <div className="flex flex-wrap items-center gap-4 mt-3">
-                {user.location && (
-                  <span className="flex items-center gap-1.5 text-xs text-white/35">
-                    <MapPin size={12} />{user.location}
-                  </span>
-                )}
-                {user.phone && (
-                  <span className="flex items-center gap-1.5 text-xs text-white/35">
-                    <Phone size={12} />{user.phone}
-                  </span>
-                )}
-              </div>
-            </div>
+        <div className="min-w-0">
+          <p className="mono mb-4 text-[11px] uppercase tracking-[0.16em] text-white/40">
+            {user.role === 'provider' ? 'Service provider' : user.role}
+            {user.location && <> · {user.location}</>}
+            {user.createdAt && <> · Joined {fmtDate(user.createdAt)}</>}
+          </p>
+          <h1 className="serif flex flex-wrap items-center gap-3 text-5xl leading-[0.95] md:text-7xl">
+            <span>{user.name}</span>
+            {isVerified && <VerifiedBadge size={26} />}
+          </h1>
+          <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2">
+            {ratingsData.total > 0 ? (
+              <a href="#reviews" className="group inline-flex items-center gap-3">
+                <span className="mono text-2xl text-white">{fmtAvg(ratingsData.average)}</span>
+                <Stars rating={ratingsData.average} />
+                <span className="text-[13px] text-white/40 transition group-hover:text-white">
+                  {ratingsData.total} {ratingsData.total === 1 ? 'review' : 'reviews'}
+                </span>
+              </a>
+            ) : (
+              <span className="text-[13px] text-white/40">No reviews yet</span>
+            )}
+            {isVerified && (
+              <span className="mono text-[11px] uppercase tracking-[0.14em] text-green-400">ID verified</span>
+            )}
           </div>
+        </div>
+      </header>
 
-          {/* Bio */}
+      <div className="grid gap-16 lg:grid-cols-[1fr_320px] lg:gap-16">
+
+        {/* ─── Left ─── */}
+        <div className="min-w-0 space-y-14">
           {user.bio && (
-            <div className="mt-5 pt-5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-              <p className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-2">About</p>
-              <p className="text-white/60 text-sm leading-relaxed">{user.bio}</p>
-            </div>
+            <section>
+              <p className="mono mb-4 text-[10px] uppercase tracking-[0.16em] text-white/35">About</p>
+              <p className="whitespace-pre-wrap text-[17px] leading-[1.7] text-white/80">{user.bio}</p>
+            </section>
           )}
 
-          {/* Share this profile */}
-          <div className="mt-5 pt-5 flex items-center gap-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-            <p className="text-xs text-white/25 flex-1">Share this profile</p>
-            <button onClick={copyLink}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
-              style={{ background: copied ? 'rgba(74,222,128,0.2)' : 'rgba(255,255,255,0.06)', color: copied ? '#4ade80' : 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.08)' }}>
-              {copied ? <><Check size={12} /> Copied!</> : <><Copy size={12} /> Copy Link</>}
+          {user.skills?.length > 0 && (
+            <section>
+              <p className="mono mb-4 text-[10px] uppercase tracking-[0.16em] text-white/35">Services</p>
+              <ul className="flex flex-wrap gap-2">
+                {user.skills.map((skill) => (
+                  <li key={skill}>
+                    <Link href={`/browse?category=${encodeURIComponent(skill)}`}
+                      className="inline-block rounded-full border border-white/15 px-4 py-2 text-[13px] text-white/80 transition hover:border-green-400 hover:text-green-400">
+                      {skill}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          <section id="reviews" className="scroll-mt-8">
+            <div className="mb-2 flex items-baseline gap-4">
+              <h2 className="serif text-4xl leading-none">Reviews</h2>
+              {ratingsData.total > 0 && <span className="mono text-[13px] text-white/35">{ratingsData.total}</span>}
+            </div>
+
+            <div className="border-t border-white/10">
+              {ratingsData.total === 0 ? (
+                <p className="py-10 text-[15px] text-white/45">
+                  {isSelf
+                    ? 'Reviews appear here after clients rate your work. Finish a few jobs and ask happy clients to leave one.'
+                    : `${firstName} hasn’t been reviewed yet. Everyone starts somewhere.`}
+                </p>
+              ) : (
+                <>
+                  <ul>
+                    {reviews.map((r) => (
+                      <li key={r._id} className="border-b border-white/[0.07] py-7">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                          <Stars rating={r.rating} className="text-[13px]" />
+                          <span className="mono text-[11px] text-white/30">{fmtDate(r.createdAt)}</span>
+                        </div>
+                        {r.review
+                          ? <p className="serif text-2xl leading-snug text-white/90">“{r.review}”</p>
+                          : <p className="text-[14px] italic text-white/35">No written review.</p>}
+                        <p className="mt-3 text-[13px] text-white/45">
+                          {r.client?.name || 'A client'}
+                          {r.job?.title && <span className="text-white/30"> · {r.job.title}</span>}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                  {ratingsData.ratings.length > 5 && !showAllReviews && (
+                    <button onClick={() => setShowAllReviews(true)}
+                      className="mt-6 border-b border-white/20 pb-0.5 text-[14px] text-white/70 transition hover:border-green-400 hover:text-green-400">
+                      Show all {ratingsData.ratings.length} reviews
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          </section>
+        </div>
+
+        {/* ─── Right: contact ─── */}
+        <aside className="lg:sticky lg:top-8 lg:self-start">
+          <div className="border border-white/10 bg-[#0b150e] p-6">
+            {isSelf ? (
+              <>
+                <p className="mono mb-3 text-[10px] uppercase tracking-[0.16em] text-white/35">Your public profile</p>
+                <p className="text-[14px] leading-relaxed text-white/60">This is what clients see. Share it on WhatsApp and Instagram to get more work.</p>
+                <Link href="/profile"
+                  className="mt-6 flex w-full items-center justify-center gap-2 rounded-full bg-green-400 py-3 text-[14px] font-medium text-[#080f0a] transition hover:bg-green-300">
+                  Edit profile
+                </Link>
+              </>
+            ) : (
+              <>
+                <p className="serif mb-5 text-3xl leading-tight">Work with {firstName}</p>
+                {session ? (
+                  <Link href={chatHref}
+                    className="group flex w-full items-center justify-center gap-2 rounded-full bg-green-400 py-3 text-[14px] font-medium text-[#080f0a] transition hover:bg-green-300">
+                    Send a message <ArrowRight size={15} className="transition-transform group-hover:translate-x-0.5" />
+                  </Link>
+                ) : (
+                  <Link href={`/login?callbackUrl=${encodeURIComponent(`/profile/${id}`)}`}
+                    className="group flex w-full items-center justify-center gap-2 rounded-full bg-green-400 py-3 text-[14px] font-medium text-[#080f0a] transition hover:bg-green-300">
+                    Log in to message <ArrowRight size={15} className="transition-transform group-hover:translate-x-0.5" />
+                  </Link>
+                )}
+
+                {telHref && (
+                  showPhone ? (
+                    <a href={telHref}
+                      className="mono mt-3 flex w-full items-center justify-center rounded-full border border-green-400/50 py-3 text-[14px] text-green-400 transition hover:bg-green-400/10">
+                      {user.phone}
+                    </a>
+                  ) : (
+                    <button onClick={() => setShowPhone(true)}
+                      className="mt-3 flex w-full items-center justify-center rounded-full border border-white/15 py-3 text-[14px] text-white/75 transition hover:border-white/40 hover:text-white">
+                      Show phone number
+                    </button>
+                  )
+                )}
+              </>
+            )}
+
+            <button onClick={share}
+              className="mt-6 inline-flex items-center gap-2 text-[13px] text-white/50 transition hover:text-white">
+              {copied ? <><Check size={14} className="text-green-400" /> Link copied</> : <><Share2 size={14} /> Share this profile</>}
             </button>
           </div>
-        </div>
 
-        {/* ── Social Links ───────────────────────────────────────────────── */}
-        {activeSocials.length > 0 && (
-          <div className="p-6 rounded-2xl" style={glass}>
-            <div className="flex items-center gap-2.5 mb-4">
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center"
-                style={{ background: 'rgba(74,222,128,0.12)' }}>
-                <Link2 size={14} className="text-green-400" />
-              </div>
-              <p className="text-sm font-semibold text-white">Find Me Online</p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {activeSocials.map(platform => {
-                const value = user.socialLinks[platform.key];
-                return (
-                  <a
-                    key={platform.key}
-                    href={platform.buildUrl(value)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition hover:brightness-110 active:scale-95"
-                    style={{
-                      background: `${platform.color}18`,
-                      border:     `1px solid ${platform.color}30`,
-                      color:      platform.color,
-                    }}
-                  >
-                    <span>{platform.icon}</span>
-                    {platform.label}
-                    <ExternalLink size={11} className="opacity-60" />
-                  </a>
-                );
-              })}
-            </div>
-            <p className="text-xs text-white/20 mt-4">
-              These links help you verify my work and reach me on your preferred platform.
-            </p>
-          </div>
-        )}
-
-        {/* Skills */}
-        {user.skills?.length > 0 && (
-          <div className="p-6 rounded-2xl" style={glass}>
-            <div className="flex items-center gap-2.5 mb-4">
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center"
-                style={{ background: 'rgba(74,222,128,0.12)' }}>
-                <Briefcase size={14} className="text-green-400" />
-              </div>
-              <p className="text-sm font-semibold text-white">Skills & Services</p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {user.skills.map(skill => (
-                <span key={skill} className="px-3.5 py-2 rounded-xl text-xs font-medium"
-                  style={{ background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.2)', color: '#4ade80' }}>
-                  {skill}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Reviews */}
-        <div className="p-6 rounded-2xl" style={glass}>
-          <div className="flex items-center gap-2.5 mb-5">
-            <div className="w-7 h-7 rounded-lg flex items-center justify-center"
-              style={{ background: 'rgba(251,191,36,0.12)' }}>
-              <Star size={14} style={{ color: '#fbbf24' }} />
-            </div>
-            <p className="text-sm font-semibold text-white">
-              Reviews {ratingsData.total > 0 && <span className="text-white/30 font-normal">({ratingsData.total})</span>}
-            </p>
-          </div>
-
-          {ratingsData.total === 0 ? (
-            <div className="text-center py-10">
-              <Star size={28} className="mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.08)' }} />
-              <p className="text-white/25 text-sm">No reviews yet.</p>
-            </div>
-          ) : (
-            <div className="space-y-5">
-              <div className="flex items-center gap-5 p-5 rounded-2xl"
-                style={{ background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)' }}>
-                <div className="text-center shrink-0">
-                  <p className="text-4xl font-bold" style={{ color: '#fbbf24' }}>{ratingsData.average}</p>
-                  <p className="text-xs text-white/25 mt-1">out of 5</p>
-                </div>
-                <div>
-                  <StarDisplay rating={ratingsData.average} size={20} />
-                  <p className="text-xs text-white/35 mt-1.5">
-                    Based on {ratingsData.total} review{ratingsData.total !== 1 ? 's' : ''}
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                {ratingsData.ratings.map(r => (
-                  <div key={r._id} className="p-4 rounded-xl"
-                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                    <div className="flex items-start justify-between mb-2 gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-white truncate">{r.client?.name}</p>
-                        {r.job?.title && (
-                          <p className="text-xs text-white/25 mt-0.5 truncate">for: {r.job.title}</p>
-                        )}
-                      </div>
-                      <div className="text-right shrink-0">
-                        <StarDisplay rating={r.rating} size={12} />
-                        <p className="text-[11px] text-white/25 mt-1">
-                          {new Date(r.createdAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}
-                        </p>
-                      </div>
-                    </div>
-                    {r.review && (
-                      <p className="text-white/45 text-xs leading-relaxed mt-2 pt-2"
-                        style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                        "{r.review}"
-                      </p>
-                    )}
-                  </div>
+          {socials.length > 0 && (
+            <nav className="mt-10">
+              <p className="mono mb-3 text-[10px] uppercase tracking-[0.16em] text-white/35">Elsewhere</p>
+              <ul className="border-t border-white/10">
+                {socials.map((p) => (
+                  <li key={p.key}>
+                    <a href={p.url} target="_blank" rel="noopener noreferrer nofollow"
+                      className="group flex items-center justify-between border-b border-white/10 py-3.5 text-[14px] text-white/75 transition hover:text-green-400">
+                      {p.label}
+                      <ArrowUpRight size={15} className="text-white/25 transition group-hover:text-green-400" />
+                    </a>
+                  </li>
                 ))}
-              </div>
-            </div>
+              </ul>
+              <p className="mt-3 text-[12px] leading-relaxed text-white/30">Check their past work before you hire.</p>
+            </nav>
           )}
-        </div>
-
-        {/* 100Gigs branding footer — helps with viral sharing */}
-        <div className="flex items-center justify-center gap-2 py-4">
-          <div className="w-6 h-6 rounded-lg flex items-center justify-center"
-            style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)' }}>
-            <span className="text-white font-black text-xs">G</span>
-          </div>
-          <span className="text-white/20 text-xs">
-            Find more verified service providers on{' '}
-            <a href="/" className="text-green-400/60 hover:text-green-400 transition">100Gigs</a>
-            {' '}— Port Harcourt's gig marketplace
-          </span>
-        </div>
+        </aside>
       </div>
+
+      {/* Footer — for people arriving from a shared link */}
+      <footer className="mt-24 border-t border-white/10 pt-8">
+        <p className="text-[13px] text-white/40">
+          Looking for someone else?{' '}
+          <Link href="/" className="text-white transition hover:text-green-400">
+            <span className="text-green-400">100</span>Gigs
+          </Link>{' '}
+          connects you with skilled hands across Port Harcourt.
+        </p>
+      </footer>
     </div>
   );
 }
