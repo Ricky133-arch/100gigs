@@ -7,44 +7,78 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Lock, ArrowRight, Loader2, Eye, EyeOff, CheckCircle, XCircle } from 'lucide-react';
-import { toast } from 'sonner';
+import { ArrowRight, ArrowLeft, Loader2, Eye, EyeOff, Check } from 'lucide-react';
+
+const MIN_LENGTH = 6; // must match the server's rule
+const REDIRECT_SECONDS = 5;
+
+// Rough strength: length plus a mix of letters, numbers and symbols
+function strengthOf(pw) {
+  if (!pw) return null;
+  if (pw.length < MIN_LENGTH) return { label: `At least ${MIN_LENGTH} characters`, level: 0 };
+  let score = 0;
+  if (pw.length >= 8) score++;
+  if (pw.length >= 12) score++;
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score++;
+  if (/\d/.test(pw)) score++;
+  if (/[^A-Za-z0-9]/.test(pw)) score++;
+  if (score <= 1) return { label: 'Weak — easy to guess', level: 1 };
+  if (score <= 3) return { label: 'Good', level: 2 };
+  return { label: 'Strong', level: 3 };
+}
+
+const LEVEL_COLOR = ['bg-red-400', 'bg-amber-300', 'bg-green-400', 'bg-green-400'];
+const LEVEL_TEXT = ['text-red-300', 'text-amber-200', 'text-green-400', 'text-green-400'];
+
+// Words that suggest the link itself is the problem, not the password
+const LINK_PROBLEM = /expired|invalid|used|token|not found/i;
 
 function ResetPasswordContent() {
   const searchParams = useSearchParams();
-  const router       = useRouter();
+  const router = useRouter();
 
   const token = searchParams.get('token');
   const email = searchParams.get('email');
 
-  const [password,        setPassword]        = useState('');
+  const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword,    setShowPassword]    = useState(false);
-  const [loading,         setLoading]         = useState(false);
-  const [done,            setDone]            = useState(false);
-  const [visible,         setVisible]         = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState('');
+  const [linkBroken, setLinkBroken] = useState(false);
+  const [countdown, setCountdown] = useState(REDIRECT_SECONDS);
 
+  // Countdown to login after success; cancelled if the user leaves first
   useEffect(() => {
-    const t = setTimeout(() => setVisible(true), 50);
+    if (!done) return;
+    if (countdown <= 0) { router.push('/login'); return; }
+    const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
     return () => clearTimeout(t);
-  }, []);
+  }, [done, countdown]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Invalid link — no token or email in URL
-  if (!token || !email) {
+  const strength = strengthOf(password);
+  const mismatch = confirmPassword.length > 0 && password !== confirmPassword;
+  const matches = confirmPassword.length > 0 && password === confirmPassword;
+  const canSubmit = password.length >= MIN_LENGTH && matches && !loading;
+
+  // ── Link is missing its token or email, or the server said it's no good ──
+  if (!token || !email || linkBroken) {
     return (
-      <div className="text-center py-8">
-        <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6"
-          style={{ background: 'rgba(248,113,113,0.12)' }}>
-          <XCircle size={32} className="text-red-400" />
-        </div>
-        <h2 className="text-xl font-bold text-white mb-3">Invalid reset link</h2>
-        <p className="text-white/40 text-sm mb-6">
-          This link is missing required information. Please request a new reset link.
+      <div className="max-w-md">
+        <p className="mono mb-6 text-[11px] uppercase tracking-[0.18em] text-red-400">Link not valid</p>
+        <h1 className="serif text-5xl leading-[0.95] md:text-6xl">
+          This link has<br /><em className="text-white/80">run out.</em>
+        </h1>
+        <p className="mt-6 text-[15px] leading-relaxed text-white/55">
+          {linkBroken
+            ? 'Reset links work once and only for an hour. This one has expired or was already used.'
+            : 'This link is missing some information — it may have been cut off when you copied it.'}
+          {' '}Ask for a fresh one and it’ll be in your inbox in a minute.
         </p>
         <Link href="/forgot-password"
-          className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold text-white"
-          style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)' }}>
-          Request New Link
+          className="group mt-10 flex w-full items-center justify-center gap-2 rounded-full bg-green-400 py-3.5 text-[14px] font-medium text-[#080f0a] transition hover:bg-green-300 sm:w-max sm:px-8">
+          Send me a new link <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
         </Link>
       </div>
     );
@@ -52,244 +86,168 @@ function ResetPasswordContent() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    if (password.length < 6) {
-      toast.error('Password must be at least 6 characters');
-      return;
-    }
-    if (password !== confirmPassword) {
-      toast.error('Passwords do not match');
-      return;
-    }
+    setError('');
+    if (password.length < MIN_LENGTH) { setError(`Use at least ${MIN_LENGTH} characters.`); return; }
+    if (password !== confirmPassword) { setError('The two passwords don’t match.'); return; }
 
     setLoading(true);
     try {
-      const res  = await fetch('/api/auth/reset-password', {
-        method:  'POST',
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ token, email, password }),
+        body: JSON.stringify({ token, email, password }),
       });
-      const data = await res.json();
-
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        toast.error(data.error || 'Failed to reset password');
+        const msg = data.error || '';
+        if (LINK_PROBLEM.test(msg) || res.status === 410) { setLinkBroken(true); return; }
+        setError(msg || 'Couldn’t reset your password. Please try again.');
         return;
       }
-
       setDone(true);
-      // Redirect to login after 3 seconds
-      setTimeout(() => router.push('/login'), 3000);
     } catch {
-      toast.error('Something went wrong. Please try again.');
+      setError('Couldn’t reach the server. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  const passwordStrength = () => {
-    if (password.length === 0) return null;
-    if (password.length < 6)  return { label: 'Too short',  color: '#f87171', width: '25%' };
-    if (password.length < 8)  return { label: 'Weak',       color: '#facc15', width: '50%' };
-    if (password.length < 12) return { label: 'Good',       color: '#4ade80', width: '75%' };
-    return                           { label: 'Strong',     color: '#4ade80', width: '100%' };
-  };
+  // ── Success ──
+  if (done) {
+    return (
+      <div className="max-w-md">
+        <p className="mono mb-6 text-[11px] uppercase tracking-[0.18em] text-green-400">Password changed</p>
+        <h1 className="serif text-5xl leading-[0.95] md:text-6xl">
+          You’re all<br /><em className="text-green-400">set.</em>
+        </h1>
+        <p className="mt-6 text-[15px] leading-relaxed text-white/55">
+          Your new password is saved. Log in with <span className="text-white">{email}</span> and your new password.
+        </p>
+        <Link href="/login"
+          className="group mt-10 flex w-full items-center justify-center gap-2 rounded-full bg-green-400 py-3.5 text-[14px] font-medium text-[#080f0a] transition hover:bg-green-300 sm:w-max sm:px-8">
+          Log in now <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
+        </Link>
+        <p className="mono mt-4 text-[11px] text-white/30">Taking you there in {countdown}s</p>
+      </div>
+    );
+  }
 
-  const strength = passwordStrength();
-
+  // ── Form ──
   return (
-    <>
-      {done ? (
-        /* ── Success ──────────────────────────────────────────────── */
-        <div className="text-center py-4">
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6"
-            style={{ background: 'rgba(74,222,128,0.12)' }}>
-            <CheckCircle size={32} className="text-green-400" />
+    <div className="max-w-md">
+      <h1 className="serif text-5xl leading-[0.95] md:text-6xl">
+        Choose a new<br /><em className="text-green-400">password.</em>
+      </h1>
+      <p className="mt-6 text-[15px] leading-relaxed text-white/55">
+        For <span className="text-white">{email}</span>. Pick something you don’t use on other sites.
+      </p>
+
+      <form onSubmit={handleSubmit} className="mt-10 space-y-8">
+        {/* Lets password managers save the new password against the right account */}
+        <input type="email" name="username" autoComplete="username" value={email} readOnly hidden />
+
+        <div>
+          <label htmlFor="new-password" className="mono mb-3 block text-[11px] uppercase tracking-[0.18em] text-white/35">
+            New password
+          </label>
+          <div className="flex items-center border-b border-white/20 pb-3 transition-colors focus-within:border-green-400">
+            <input
+              id="new-password"
+              type={showPassword ? 'text' : 'password'}
+              autoComplete="new-password"
+              autoFocus
+              required
+              minLength={MIN_LENGTH}
+              value={password}
+              onChange={(e) => { setPassword(e.target.value); setError(''); }}
+              placeholder={`At least ${MIN_LENGTH} characters`}
+              className="min-w-0 flex-1 bg-transparent text-lg text-white outline-none placeholder:text-white/20"
+            />
+            <button type="button" onClick={() => setShowPassword(!showPassword)}
+              aria-label={showPassword ? 'Hide passwords' : 'Show passwords'}
+              className="ml-3 text-white/30 transition hover:text-white">
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
           </div>
-          <h2 className="text-2xl font-bold text-white mb-3">Password reset!</h2>
-          <p className="text-white/40 text-sm mb-2">
-            Your password has been changed successfully.
-          </p>
-          <p className="text-white/25 text-xs mb-8">Redirecting you to sign in...</p>
-          <Link
-            href="/login"
-            className="flex items-center justify-center gap-2 w-full py-3.5 rounded-xl text-sm font-semibold text-white"
-            style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 24px rgba(22,163,74,0.35)' }}
-          >
-            Sign In Now
-          </Link>
+          {strength && (
+            <div className="mt-3">
+              <div className="flex gap-1">
+                {[0, 1, 2].map((i) => (
+                  <span key={i} className={`h-px flex-1 transition-colors ${i < Math.max(1, strength.level) ? LEVEL_COLOR[strength.level] : 'bg-white/10'}`} />
+                ))}
+              </div>
+              <p className={`mono mt-2 text-[11px] ${LEVEL_TEXT[strength.level]}`}>{strength.label}</p>
+            </div>
+          )}
         </div>
-      ) : (
-        /* ── Form ─────────────────────────────────────────────────── */
-        <>
-          <div className={`mb-8 ${visible ? 'anim-fade-up hidden-init d1' : 'hidden-init'}`}>
-            <h1 className="text-3xl font-bold text-white mb-1">New password</h1>
-            <p className="text-white/40 text-sm">
-              Choose a strong password for your 100Gigs account.
-            </p>
+
+        <div>
+          <label htmlFor="confirm-password" className="mono mb-3 block text-[11px] uppercase tracking-[0.18em] text-white/35">
+            Type it again
+          </label>
+          <div className={`flex items-center border-b pb-3 transition-colors focus-within:border-green-400 ${mismatch ? 'border-red-400/70' : 'border-white/20'}`}>
+            <input
+              id="confirm-password"
+              type={showPassword ? 'text' : 'password'}
+              autoComplete="new-password"
+              required
+              value={confirmPassword}
+              onChange={(e) => { setConfirmPassword(e.target.value); setError(''); }}
+              placeholder="Same password"
+              className="min-w-0 flex-1 bg-transparent text-lg text-white outline-none placeholder:text-white/20"
+            />
+            {matches && <Check size={18} className="ml-3 text-green-400" aria-label="Passwords match" />}
           </div>
+          {mismatch && <p className="mt-2 text-[12px] text-red-300">These don’t match yet.</p>}
+        </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* New password */}
-            <div className={`${visible ? 'anim-fade-up hidden-init d2' : 'hidden-init'}`}>
-              <label className="block text-xs font-semibold uppercase tracking-widest text-white/40 mb-2">
-                New Password
-              </label>
-              <div className="relative">
-                <Lock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/25" />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  placeholder="Min. 6 characters"
-                  required
-                  className="w-full pl-11 pr-12 py-3.5 rounded-xl text-sm text-white placeholder-white/20 outline-none transition"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
-                  onFocus={e => e.target.style.borderColor = 'rgba(74,222,128,0.5)'}
-                  onBlur={e  => e.target.style.borderColor = 'rgba(255,255,255,0.1)'}
-                />
-                <button type="button" onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-white/25 hover:text-white/60 transition">
-                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-              </div>
+        {error && (
+          <p role="alert" className="border-l-2 border-red-400 pl-3 text-[13px] leading-relaxed text-red-300">{error}</p>
+        )}
 
-              {/* Strength bar */}
-              {strength && (
-                <div className="mt-2">
-                  <div className="h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
-                    <div className="h-full rounded-full transition-all duration-300"
-                      style={{ width: strength.width, background: strength.color }} />
-                  </div>
-                  <p className="text-xs mt-1" style={{ color: strength.color }}>{strength.label}</p>
-                </div>
-              )}
-            </div>
-
-            {/* Confirm password */}
-            <div className={`${visible ? 'anim-fade-up hidden-init d2' : 'hidden-init'}`}>
-              <label className="block text-xs font-semibold uppercase tracking-widest text-white/40 mb-2">
-                Confirm Password
-              </label>
-              <div className="relative">
-                <Lock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/25" />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={confirmPassword}
-                  onChange={e => setConfirmPassword(e.target.value)}
-                  placeholder="Repeat your password"
-                  required
-                  className="w-full pl-11 pr-4 py-3.5 rounded-xl text-sm text-white placeholder-white/20 outline-none transition"
-                  style={{
-                    background:  'rgba(255,255,255,0.06)',
-                    border:      `1px solid ${
-                      confirmPassword && password !== confirmPassword
-                        ? 'rgba(248,113,113,0.5)'
-                        : confirmPassword && password === confirmPassword
-                        ? 'rgba(74,222,128,0.5)'
-                        : 'rgba(255,255,255,0.1)'
-                    }`,
-                  }}
-                  onFocus={e => e.target.style.borderColor = 'rgba(74,222,128,0.5)'}
-                  onBlur={e  => {
-                    e.target.style.borderColor =
-                      confirmPassword && password !== confirmPassword
-                        ? 'rgba(248,113,113,0.5)'
-                        : 'rgba(255,255,255,0.1)';
-                  }}
-                />
-              </div>
-              {confirmPassword && password !== confirmPassword && (
-                <p className="text-xs text-red-400 mt-1">Passwords do not match</p>
-              )}
-            </div>
-
-            {/* Submit */}
-            <div className={`pt-2 ${visible ? 'anim-fade-up hidden-init d3' : 'hidden-init'}`}>
-              <button
-                type="submit"
-                disabled={loading || (confirmPassword && password !== confirmPassword)}
-                className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-semibold text-sm text-white transition-all active:scale-[0.98] disabled:opacity-50 group"
-                style={{
-                  background: loading ? 'rgba(22,163,74,0.6)' : 'linear-gradient(135deg,#16a34a,#15803d)',
-                  boxShadow:  loading ? 'none' : '0 4px 24px rgba(22,163,74,0.35)',
-                }}
-              >
-                {loading
-                  ? <><Loader2 size={17} className="animate-spin" /> Resetting...</>
-                  : <>Reset Password <ArrowRight size={17} className="group-hover:translate-x-0.5 transition-transform" /></>
-                }
-              </button>
-            </div>
-          </form>
-        </>
-      )}
-    </>
+        <button type="submit" disabled={!canSubmit}
+          className="group flex w-full items-center justify-center gap-2 rounded-full bg-green-400 py-3.5 text-[14px] font-medium text-[#080f0a] transition hover:bg-green-300 active:scale-[0.99] disabled:bg-white/[0.06] disabled:text-white/30">
+          {loading
+            ? <><Loader2 size={16} className="animate-spin" /> Saving…</>
+            : <>Save new password <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" /></>}
+        </button>
+      </form>
+    </div>
   );
 }
 
 export default function ResetPasswordPage() {
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    const t = setTimeout(() => setVisible(true), 50);
-    return () => clearTimeout(t);
-  }, []);
-
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#080f0a] relative overflow-hidden px-4 py-12">
+    <div className="rp flex min-h-screen flex-col bg-[#080f0a] text-[#e9efe9] antialiased">
       <style>{`
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(20px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes drift {
-          0%,100% { transform: translate(0,0) scale(1); }
-          33%     { transform: translate(30px,-20px) scale(1.05); }
-          66%     { transform: translate(-20px,15px) scale(0.97); }
-        }
-        .anim-fade-up { animation: fadeUp 0.6s cubic-bezier(.22,1,.36,1) forwards; }
-        .anim-drift   { animation: drift 12s ease-in-out infinite; }
-        .hidden-init  { opacity: 0; }
-        .d1 { animation-delay: 0.05s; }
-        .d2 { animation-delay: 0.15s; }
-        .d3 { animation-delay: 0.25s; }
+        .rp { font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif; }
+        .serif { font-family: var(--font-serif), Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+        .mono { font-family: var(--font-mono), ui-monospace, monospace; }
+        @keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+        .rise { animation: rise .7s cubic-bezier(.2,.7,.2,1) both; }
+        @media (prefers-reduced-motion: reduce) { .rise { animation: none; } }
       `}</style>
 
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-[-10%] left-[-5%] w-[500px] h-[500px] rounded-full anim-drift"
-          style={{ background: 'radial-gradient(circle, rgba(22,163,74,0.2) 0%, transparent 70%)' }} />
-        <div className="absolute bottom-[-15%] right-[-5%] w-[600px] h-[600px] rounded-full anim-drift"
-          style={{ background: 'radial-gradient(circle, rgba(16,185,129,0.15) 0%, transparent 70%)', animationDelay: '4s' }} />
-        <div className="absolute inset-0 opacity-[0.03]" style={{
-          backgroundImage: 'linear-gradient(rgba(255,255,255,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.8) 1px, transparent 1px)',
-          backgroundSize: '72px 72px',
-        }} />
-      </div>
-
-      <div
-        className={`relative w-full max-w-md rounded-3xl p-8 ${visible ? 'anim-fade-up hidden-init' : 'hidden-init'}`}
-        style={{
-          background:          'rgba(255,255,255,0.04)',
-          backdropFilter:      'blur(32px) saturate(180%)',
-          WebkitBackdropFilter:'blur(32px) saturate(180%)',
-          border:              '1px solid rgba(255,255,255,0.1)',
-          boxShadow:           '0 24px 64px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)',
-        }}
-      >
-        <div className="mb-8">
-          <Link href="/" className="text-2xl font-bold tracking-tight">
-            <span className="text-green-400">100</span><span className="text-white">Gigs</span>
+      <header className="border-b border-white/[0.07]">
+        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5 md:px-8">
+          <Link href="/" className="text-[1.35rem] font-semibold tracking-tight">
+            <span className="text-green-400">100</span>Gigs
+          </Link>
+          <Link href="/login" className="inline-flex items-center gap-1.5 text-[13px] text-white/50 transition hover:text-white">
+            <ArrowLeft size={14} /> Log in
           </Link>
         </div>
+      </header>
 
-        <Suspense fallback={
-          <div className="flex justify-center py-12">
-            <div className="w-8 h-8 rounded-full border-2 border-green-500/20 border-t-green-500 animate-spin" />
-          </div>
-        }>
-          <ResetPasswordContent />
-        </Suspense>
-      </div>
+      <main className="flex flex-1 items-center">
+        <div className="rise mx-auto w-full max-w-6xl px-5 py-16 md:px-8">
+          <Suspense fallback={
+            <p className="mono text-[11px] uppercase tracking-[0.18em] text-white/35">Loading…</p>
+          }>
+            <ResetPasswordContent />
+          </Suspense>
+        </div>
+      </main>
     </div>
   );
 }
