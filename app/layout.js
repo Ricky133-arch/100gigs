@@ -1,4 +1,4 @@
-import { Inter, Inter_Tight, Instrument_Serif, JetBrains_Mono } from 'next/font/google';
+import { Inter_Tight, Instrument_Serif, JetBrains_Mono } from 'next/font/google';
 import Providers from '@/components/providers';
 import ThemeProvider from '@/components/ThemeProvider';
 import Navbar from '@/components/Navbar';
@@ -8,20 +8,18 @@ import InstallBanner from '@/components/InstallBanner';
 import { Toaster } from 'sonner';
 import './globals.css';
 
-// Default body font for the rest of the app (unchanged)
-const inter = Inter({ subsets: ['latin'] });
-
-// Homepage fonts — exposed as CSS variables so any page can opt in
+// Inter Tight and JetBrains Mono are variable fonts: one file covers every
+// weight, so no `weight` list (listing weights makes Next download a separate
+// file per weight, which is what broke the Vercel build).
 const interTight = Inter_Tight({
   subsets: ['latin'],
-  weight: ['400', '500', '600'],
   variable: '--font-sans',
   display: 'swap',
 });
 
 const instrumentSerif = Instrument_Serif({
   subsets: ['latin'],
-  weight: '400',
+  weight: '400', // not a variable font, so the weight is required
   style: ['normal', 'italic'],
   variable: '--font-serif',
   display: 'swap',
@@ -29,7 +27,6 @@ const instrumentSerif = Instrument_Serif({
 
 const jetbrainsMono = JetBrains_Mono({
   subsets: ['latin'],
-  weight: ['400', '500'],
   variable: '--font-mono',
   display: 'swap',
 });
@@ -60,7 +57,9 @@ export default function RootLayout({ children }) {
       suppressHydrationWarning
       className={`${interTight.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable}`}
     >
-      <body className={`${inter.className} bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100`}>
+      {/* Inter Tight everywhere (it replaces plain Inter, one less font to download).
+          Dark background from the first paint, so there's no white flash between pages. */}
+      <body className={`${interTight.className} bg-[#080f0a] text-[#e9efe9] antialiased`}>
         <Providers>
           <ThemeProvider>
             <AppEntry>
