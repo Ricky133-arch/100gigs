@@ -2,363 +2,354 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import {
-  CreditCard, CheckCircle, Clock, AlertTriangle,
-  Loader2, RefreshCw, X, Building2, TrendingUp,
-  ArrowRight, Filter,
-} from 'lucide-react';
+import Link from 'next/link';
 import { toast } from 'sonner';
+import { Loader2, RefreshCw, X, ArrowLeft, Copy, Check, ArrowRight } from 'lucide-react';
 
-const glass = {
-  background:          'rgba(255,255,255,0.04)',
-  border:              '1px solid rgba(255,255,255,0.08)',
-  backdropFilter:      'blur(12px)',
-  WebkitBackdropFilter:'blur(12px)',
+/* ── helpers ─────────────────────────────────────────────── */
+
+const naira = (n) => `₦${Number(n || 0).toLocaleString('en-NG')}`;
+const fmtDate = (d, time = false) => (d
+  ? new Date(d).toLocaleString('en-NG', { day: 'numeric', month: 'short', year: 'numeric', ...(time ? { hour: 'numeric', minute: '2-digit' } : {}) })
+  : '—');
+
+const TSTATUS = {
+  awaiting_settlement: { dot: 'bg-amber-300', text: 'text-amber-300', label: 'To pay out' },
+  pending:             { dot: 'bg-sky-300',   text: 'text-sky-300',   label: 'Transfer pending' },
+  success:             { dot: 'bg-green-400', text: 'text-green-400', label: 'Paid out' },
+  failed:              { dot: 'bg-red-400',   text: 'text-red-400',   label: 'Failed' },
 };
 
-const STATUS_CONFIG = {
-  awaiting_settlement: { label: 'Awaiting Settlement', color: '#facc15', bg: 'rgba(250,204,21,0.12)',  icon: Clock         },
-  pending:             { label: 'Transfer Pending',     color: '#60a5fa', bg: 'rgba(96,165,250,0.12)',  icon: Loader2       },
-  success:             { label: 'Paid Out',             color: '#4ade80', bg: 'rgba(74,222,128,0.12)',  icon: CheckCircle   },
-  failed:              { label: 'Failed',               color: '#f87171', bg: 'rgba(248,113,113,0.12)', icon: AlertTriangle },
-};
-
-function StatusPill({ status }) {
-  const config = STATUS_CONFIG[status] || STATUS_CONFIG.awaiting_settlement;
-  const Icon   = config.icon;
+function Status({ value }) {
+  const s = TSTATUS[value] || TSTATUS.awaiting_settlement;
   return (
-    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
-      style={{ background: config.bg, color: config.color }}>
-      <Icon size={11} />
-      {config.label}
+    <span className={`mono inline-flex items-center gap-2 whitespace-nowrap text-[11px] uppercase tracking-[0.12em] ${s.text}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />{s.label}
     </span>
   );
 }
 
-function StatCard({ label, value, icon: Icon, color, sub }) {
+// Tap-to-copy for account numbers and amounts, so nothing gets mistyped in the bank app
+function CopyValue({ value, display, className = '' }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(String(value));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { toast.error('Couldn’t copy'); }
+  };
   return (
-    <div className="p-5 rounded-2xl" style={glass}>
-      <div className="flex items-center justify-between mb-3">
-        <p className="text-xs text-white/35 font-medium">{label}</p>
-        <div className="w-8 h-8 rounded-lg flex items-center justify-center"
-          style={{ background: `${color}20` }}>
-          <Icon size={15} style={{ color }} />
-        </div>
-      </div>
-      <p className="text-2xl font-bold text-white tabular-nums">{value}</p>
-      {sub && <p className="text-xs text-white/25 mt-1">{sub}</p>}
-    </div>
+    <button type="button" onClick={copy} title="Copy"
+      className={`group inline-flex items-center gap-2 text-left transition hover:text-green-400 ${className}`}>
+      <span>{display ?? value}</span>
+      {copied ? <Check size={13} className="shrink-0 text-green-400" /> : <Copy size={13} className="shrink-0 text-white/25 group-hover:text-green-400" />}
+    </button>
   );
 }
+
+const FILTERS = [
+  ['awaiting_settlement', 'To pay out'],
+  ['', 'All'],
+  ['success', 'Paid out'],
+  ['failed', 'Failed'],
+];
+
+/* ── page ────────────────────────────────────────────────── */
 
 export default function AdminPaymentsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const isAdmin = session?.user?.role === 'admin';
 
-  const [payments,   setPayments]   = useState([]);
-  const [stats,      setStats]      = useState(null);
-  const [loading,    setLoading]    = useState(true);
-  const [filter,     setFilter]     = useState(''); // '' | 'awaiting_settlement' | 'success'
+  const [payments, setPayments] = useState([]);
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [failedLoad, setFailedLoad] = useState(false);
+  const [filter, setFilter] = useState('awaiting_settlement');
 
-  // Modal
-  const [modal,      setModal]      = useState(null); // payment object
-  const [note,       setNote]       = useState('');
-  const [releasing,  setReleasing]  = useState(false);
+  const [modal, setModal] = useState(null);
+  const [note, setNote] = useState('');
+  const [checks, setChecks] = useState({ amount: false, name: false });
+  const [releasing, setReleasing] = useState(false);
 
   useEffect(() => {
-    if (status === 'unauthenticated') router.push('/login');
-  }, [status]);
+    if (status === 'unauthenticated') router.replace('/login?callbackUrl=%2Fadmin%2Fpayments');
+    else if (status === 'authenticated' && !isAdmin) router.replace('/dashboard');
+  }, [status, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchPayments = useCallback(async () => {
-    if (!session || session.user.role !== 'admin') return;
+    if (!isAdmin) return;
     setLoading(true);
+    setFailedLoad(false);
     try {
-      const params = filter ? `?transferStatus=${filter}` : '';
-      const res    = await fetch(`/api/admin/payments${params}`);
-      const data   = await res.json();
-      if (res.ok) {
-        setPayments(data.payments || []);
-        setStats(data.stats);
-      }
-    } catch (e) {
-      toast.error('Failed to load payments');
+      const res = await fetch(`/api/admin/payments${filter ? `?transferStatus=${filter}` : ''}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error('payments');
+      setPayments(data.payments || []);
+      setStats(data.stats || null);
+    } catch {
+      setFailedLoad(true);
+      setPayments([]);
     } finally {
       setLoading(false);
     }
-  }, [session, filter]);
+  }, [isAdmin, filter]);
 
   useEffect(() => { fetchPayments(); }, [fetchPayments]);
+
+  const openModal = (p) => { setModal(p); setNote(''); setChecks({ amount: false, name: false }); };
+  const closeModal = () => { if (!releasing) setModal(null); };
+
+  useEffect(() => {
+    if (!modal) return;
+    const onKey = (e) => e.key === 'Escape' && closeModal();
+    document.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleMarkPaid = async () => {
     if (!modal) return;
     setReleasing(true);
     try {
-      const res  = await fetch(`/api/admin/payments/${modal._id}/release`, {
-        method:  'POST',
+      const res = await fetch(`/api/admin/payments/${modal._id}/release`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ note }),
+        body: JSON.stringify({ note: note.trim() }),
       });
-      const data = await res.json();
-      if (!res.ok) { toast.error(data.error || 'Failed'); return; }
-      toast.success(data.message);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(data.error || 'Couldn’t mark this as paid'); return; }
+      toast.success(data.message || `Marked as paid. ${modal.providerId?.name?.split(' ')[0] || 'The provider'} has been notified.`);
       setModal(null);
-      setNote('');
       fetchPayments();
     } catch {
-      toast.error('Something went wrong');
+      toast.error('Something went wrong. It hasn’t been marked as paid.');
     } finally {
       setReleasing(false);
     }
   };
 
-  if (status === 'loading') return (
-    <div className="flex items-center justify-center min-h-screen bg-[#080f0a]">
-      <div className="w-10 h-10 rounded-full border-2 border-green-500/20 border-t-green-500 animate-spin" />
+  /* ── render ───────────────────────────────────────────── */
+
+  const shell = (children) => (
+    <div className="ap min-h-screen bg-[#080f0a] text-[#e9efe9] antialiased">
+      <style>{`
+        .ap { font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif; }
+        .serif { font-family: var(--font-serif), Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+        .mono { font-family: var(--font-mono), ui-monospace, monospace; }
+      `}</style>
+      {children}
     </div>
   );
 
-  if (!session || session.user.role !== 'admin') return null;
+  if (status === 'loading' || !isAdmin) {
+    return shell(
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="mono text-[11px] uppercase tracking-[0.18em] text-white/35">Loading…</p>
+      </div>
+    );
+  }
 
-  const fmt = (n) => n ? `₦${Number(n).toLocaleString()}` : '₦0';
+  const awaiting = stats?.awaitingPayout || 0;
+  const bank = modal?.providerId?.bankDetails;
 
-  return (
-    <div className="min-h-screen bg-[#080f0a] pb-32">
-      <div className="max-w-5xl mx-auto px-4 py-10 space-y-6">
+  return shell(
+    <div className="mx-auto max-w-6xl px-5 pb-32 pt-10 md:px-8 md:pt-16">
+      <Link href="/admin" className="mb-10 inline-flex items-center gap-1.5 text-[13px] text-white/45 transition hover:text-white">
+        <ArrowLeft size={14} /> Admin
+      </Link>
 
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-green-400/60 mb-1">Admin</p>
-            <h1 className="text-3xl font-bold text-white">Payments & Payouts</h1>
-            <p className="text-white/30 text-sm mt-1">
-              Track all transactions and release provider payouts manually
-            </p>
+      <header className="mb-10 flex flex-wrap items-end justify-between gap-6">
+        <h1 className="serif text-5xl leading-none md:text-7xl">Payouts</h1>
+        <button onClick={fetchPayments} aria-label="Refresh"
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 text-white/60 transition hover:border-white/40 hover:text-white">
+          <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+        </button>
+      </header>
+
+      <p className="mb-12 max-w-2xl border-l-2 border-white/15 pl-4 text-[13px] leading-relaxed text-white/50">
+        <span className="text-white/80">Manual payouts.</span> When a client pays, send the provider’s share from your Paystack dashboard or bank app,
+        then mark it paid here to notify them. This switches to automatic once the business account is verified.
+      </p>
+
+      {/* Stats */}
+      <dl className="mb-6 grid grid-cols-2 border-y border-white/10 md:grid-cols-4">
+        {[
+          ['To pay out', stats && naira(awaiting), 'text-amber-300'],
+          ['Paid to providers', stats && naira(stats.totalPaidOut), 'text-white'],
+          ['100Gigs earnings', stats && naira(stats.totalCommission), 'text-green-400'],
+          ['Payments', stats?.totalPayments, 'text-white'],
+        ].map(([t, v, tone], i) => (
+          <div key={t} className={`py-6 ${i % 2 ? 'border-l border-white/10 pl-5 md:pl-8' : ''} ${i === 2 ? 'md:border-l md:border-white/10 md:pl-8' : ''} ${i >= 2 ? 'border-t border-white/10 md:border-t-0' : ''}`}>
+            <dt className="text-[12px] text-white/40">{t}</dt>
+            <dd className={`mono mt-2 text-2xl md:text-3xl ${tone}`}>{loading && !stats ? '–' : (v ?? '—')}</dd>
           </div>
-          <button onClick={fetchPayments}
-            className="p-2.5 rounded-xl hover:bg-white/5 transition"
-            style={{ color: 'rgba(255,255,255,0.4)' }}>
-            <RefreshCw size={16} />
-          </button>
-        </div>
+        ))}
+      </dl>
 
-        {/* Manual payout notice */}
-        <div className="p-4 rounded-xl flex items-start gap-3"
-          style={{ background: 'rgba(250,204,21,0.06)', border: '1px solid rgba(250,204,21,0.15)' }}>
-          <AlertTriangle size={16} className="text-yellow-400 shrink-0 mt-0.5" />
-          <div className="text-xs text-white/50 leading-relaxed">
-            <strong className="text-white/70">Manual payout mode:</strong> Payouts are currently processed manually.
-            When a client pays, transfer the provider's share from your Paystack dashboard or bank app,
-            then click <strong className="text-white/70">"Mark as Paid"</strong> to confirm and notify the provider.
-            Automatic payouts will be enabled once a verified business account is in place.
-          </div>
-        </div>
-
-        {/* Stats */}
-        {stats && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatCard label="Total Commission"  value={fmt(stats.totalCommission)}  icon={TrendingUp}  color="#4ade80" sub="Your earnings" />
-            <StatCard label="Total Paid Out"    value={fmt(stats.totalPaidOut)}     icon={CheckCircle} color="#60a5fa" sub="To providers" />
-            <StatCard label="Awaiting Payout"   value={fmt(stats.awaitingPayout)}   icon={Clock}       color="#facc15" sub="Needs your action" />
-            <StatCard label="Total Payments"    value={stats.totalPayments}         icon={CreditCard}  color="#a78bfa" sub="All time" />
-          </div>
-        )}
-
-        {/* Filter tabs */}
-        <div className="flex gap-2">
-          {[
-            { value: '',                      label: 'All Payments' },
-            { value: 'awaiting_settlement',   label: 'Needs Payout' },
-            { value: 'success',               label: 'Paid Out'     },
-          ].map(f => (
-            <button key={f.value}
-              onClick={() => setFilter(f.value)}
-              className="px-4 py-2 rounded-xl text-sm font-medium transition"
-              style={{
-                background: filter === f.value ? 'rgba(74,222,128,0.12)' : 'rgba(255,255,255,0.04)',
-                color:      filter === f.value ? '#4ade80' : 'rgba(255,255,255,0.5)',
-                border:     `1px solid ${filter === f.value ? 'rgba(74,222,128,0.25)' : 'rgba(255,255,255,0.08)'}`,
-              }}>
-              {f.label}
+      {/* Filters */}
+      <div className="mb-2 mt-12 flex gap-6 border-b border-white/10 text-[14px]">
+        {FILTERS.map(([v, l]) => {
+          const on = filter === v;
+          return (
+            <button key={l} onClick={() => setFilter(v)}
+              className={`relative pb-3 transition-colors ${on ? 'text-white' : 'text-white/45 hover:text-white/80'}`}>
+              {l}
+              {on && <span className="absolute -bottom-px left-0 right-0 h-px bg-green-400" />}
             </button>
-          ))}
-        </div>
-
-        {/* Payments list */}
-        {loading ? (
-          <div className="flex justify-center py-20">
-            <Loader2 size={28} className="animate-spin text-green-400" />
-          </div>
-        ) : payments.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center" style={glass}>
-            <CreditCard size={36} className="mb-4" style={{ color: 'rgba(255,255,255,0.1)' }} />
-            <p className="text-white/30 text-sm">No payments yet</p>
-            <p className="text-white/20 text-xs mt-1">Payments will appear here when clients pay through 100Gigs</p>
-          </div>
-        ) : (
-          <div className="rounded-2xl overflow-hidden" style={glass}>
-            <div className="divide-y" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
-              {payments.map(payment => (
-                <div key={payment._id} className="p-5">
-                  <div className="flex items-start justify-between gap-4 mb-4">
-                    {/* Job + parties */}
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-white truncate mb-1">
-                        {payment.jobId?.title || 'Job removed'}
-                      </p>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-white/35">
-                        <span>
-                          Client: <span className="text-white/60">{payment.clientId?.name || '—'}</span>
-                        </span>
-                        <span>→</span>
-                        <span>
-                          Provider: <span className="text-white/60">{payment.providerId?.name || '—'}</span>
-                        </span>
-                      </div>
-                      {payment.providerId?.bankDetails?.accountNumber && (
-                        <p className="text-xs text-white/25 mt-1">
-                          <Building2 size={10} className="inline mr-1" />
-                          {payment.providerId.bankDetails.bankName} ·{' '}
-                          {payment.providerId.bankDetails.accountNumber} ·{' '}
-                          {payment.providerId.bankDetails.accountName}
-                        </p>
-                      )}
-                      {!payment.providerId?.bankDetails?.accountNumber && (
-                        <p className="text-xs text-red-400/60 mt-1">
-                          ⚠ Provider has not added bank details
-                        </p>
-                      )}
-                    </div>
-
-                    <StatusPill status={payment.transferStatus} />
-                  </div>
-
-                  {/* Amounts */}
-                  <div className="grid grid-cols-3 gap-2 mb-4">
-                    {[
-                      { label: 'Client Paid',     value: fmt(payment.totalAmount),   color: 'text-white'       },
-                      { label: 'Your Commission', value: fmt(payment.commission),    color: 'text-green-400'   },
-                      { label: 'Provider Gets',   value: fmt(payment.providerShare), color: 'text-blue-400'    },
-                    ].map(row => (
-                      <div key={row.label} className="p-3 rounded-xl text-center"
-                        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                        <p className={`text-sm font-bold ${row.color}`}>{row.value}</p>
-                        <p className="text-[10px] text-white/25 mt-0.5">{row.label}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Date + action */}
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs text-white/25">
-                      Paid {payment.paidAt
-                        ? new Date(payment.paidAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-                        : '—'
-                      }
-                    </p>
-
-                    {payment.transferStatus === 'awaiting_settlement' && (
-                      <button
-                        onClick={() => { setModal(payment); setNote(''); }}
-                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition"
-                        style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', color: 'white', boxShadow: '0 2px 12px rgba(22,163,74,0.3)' }}
-                      >
-                        <CheckCircle size={13} /> Mark as Paid
-                      </button>
-                    )}
-
-                    {payment.transferStatus === 'success' && (
-                      <span className="flex items-center gap-1.5 text-xs text-green-400/60">
-                        <CheckCircle size={12} />
-                        Paid {payment.transferCompletedAt
-                          ? new Date(payment.transferCompletedAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' })
-                          : ''}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+          );
+        })}
       </div>
 
-      {/* ── Mark as Paid Modal ─────────────────────────────────────────────── */}
-      {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)' }}
-          onClick={() => setModal(null)}>
-          <div className="w-full max-w-md rounded-3xl p-7"
-            style={{ background: '#080f0a', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 24px 64px rgba(0,0,0,0.5)' }}
-            onClick={e => e.stopPropagation()}>
+      {/* List */}
+      {loading ? (
+        <ul>
+          {[0, 1, 2].map((i) => (
+            <li key={i} className="border-b border-white/[0.07] py-7">
+              <div className="mb-3 h-4 w-1/3 animate-pulse bg-white/[0.08]" />
+              <div className="h-3 w-1/2 animate-pulse bg-white/[0.05]" />
+            </li>
+          ))}
+        </ul>
+      ) : failedLoad ? (
+        <div className="py-14">
+          <p className="text-[15px] text-white/60">Couldn’t load payments.</p>
+          <button onClick={fetchPayments} className="mt-4 border-b border-green-400 pb-0.5 text-[14px] text-white hover:text-green-400">Try again</button>
+        </div>
+      ) : payments.length === 0 ? (
+        <p className="py-14 text-[15px] text-white/45">
+          {filter === 'awaiting_settlement' ? 'All caught up. No one is waiting to be paid.' : 'No payments here yet. They appear when clients pay through 100Gigs.'}
+        </p>
+      ) : (
+        <ul>
+          {payments.map((p) => {
+            const b = p.providerId?.bankDetails;
+            const hasBank = !!b?.accountNumber;
+            return (
+              <li key={p._id} className="border-b border-white/[0.07] py-7">
+                <div className="grid gap-6 md:grid-cols-[1fr_auto] md:items-start md:gap-10">
+                  <div className="min-w-0">
+                    <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+                      <Status value={p.transferStatus} />
+                      <span className="mono text-[11px] text-white/30">Paid {fmtDate(p.paidAt, true)}</span>
+                    </div>
+                    <p className="truncate text-[17px] font-medium text-white">
+                      {p.jobId?._id
+                        ? <Link href={`/jobs/${p.jobId._id}`} className="transition hover:text-green-400">{p.jobId.title}</Link>
+                        : (p.jobId?.title || 'Job removed')}
+                    </p>
+                    <p className="mt-1 text-[13px] text-white/45">
+                      {p.clientId?.name || '—'} <span className="text-white/25">paid</span> {p.providerId?.name || '—'}
+                    </p>
+                    {hasBank ? (
+                      <p className="mono mt-3 text-[12px] text-white/45">{b.bankName} · {b.accountName}</p>
+                    ) : (
+                      <p className="mt-3 border-l-2 border-red-400 pl-3 text-[12px] text-red-300">
+                        No payout account yet. Ask {p.providerId?.name?.split(' ')[0] || 'them'} to add one on their verification page.
+                      </p>
+                    )}
+                    {p.reference && <p className="mono mt-1 text-[11px] text-white/25">Ref {p.reference}</p>}
+                  </div>
 
-            {/* Header */}
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center"
-                  style={{ background: 'rgba(74,222,128,0.12)' }}>
-                  <CheckCircle size={18} className="text-green-400" />
+                  <div className="md:text-right">
+                    <dl className="grid grid-cols-3 gap-4 md:block md:space-y-1">
+                      <div className="md:flex md:items-baseline md:justify-end md:gap-3">
+                        <dt className="text-[11px] text-white/35">Client paid</dt>
+                        <dd className="mono text-[14px] text-white/70">{naira(p.totalAmount)}</dd>
+                      </div>
+                      <div className="md:flex md:items-baseline md:justify-end md:gap-3">
+                        <dt className="text-[11px] text-white/35">Fee</dt>
+                        <dd className="mono text-[14px] text-white/50">{naira(p.commission)}</dd>
+                      </div>
+                      <div className="md:flex md:items-baseline md:justify-end md:gap-3">
+                        <dt className="text-[11px] text-white/35">To provider</dt>
+                        <dd className="mono text-[18px] text-green-400">{naira(p.providerShare)}</dd>
+                      </div>
+                    </dl>
+
+                    {p.transferStatus === 'awaiting_settlement' && (
+                      <button onClick={() => openModal(p)} disabled={!hasBank}
+                        className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full bg-green-400 px-5 py-2.5 text-[13px] font-medium text-[#080f0a] transition hover:bg-green-300 disabled:bg-white/[0.06] disabled:text-white/30 md:w-auto">
+                        Pay out <ArrowRight size={14} />
+                      </button>
+                    )}
+                    {p.transferStatus === 'success' && (
+                      <p className="mono mt-4 text-[11px] text-green-400/80">Sent {fmtDate(p.transferCompletedAt)}</p>
+                    )}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* ─── Payout ─── */}
+      {modal && (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/70 sm:items-center sm:p-4" onClick={closeModal}>
+          <div role="dialog" aria-modal="true" className="relative max-h-[92vh] w-full max-w-md overflow-y-auto border border-white/10 bg-[#0b150e] p-7 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+            <button onClick={closeModal} disabled={releasing} aria-label="Close"
+              className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-white/40 transition hover:bg-white/[0.06] hover:text-white">
+              <X size={16} />
+            </button>
+
+            <p className="mono mb-4 text-[10px] uppercase tracking-[0.16em] text-white/35">Pay out</p>
+            <h2 className="serif pr-8 text-3xl leading-tight">Send {modal.providerId?.name?.split(' ')[0]} their money</h2>
+            <p className="mt-2 text-[13px] text-white/45">Send it from your bank app, then confirm here. Tap any value to copy it.</p>
+
+            <dl className="mt-6 space-y-4 border-y border-white/10 py-5">
+              <div>
+                <dt className="mono text-[10px] uppercase tracking-[0.14em] text-white/35">Amount</dt>
+                <dd className="mono mt-1 text-3xl text-green-400"><CopyValue value={modal.providerShare} display={naira(modal.providerShare)} /></dd>
+              </div>
+              <div>
+                <dt className="mono text-[10px] uppercase tracking-[0.14em] text-white/35">Account number</dt>
+                <dd className="mono mt-1 text-xl tracking-[0.08em] text-white"><CopyValue value={bank?.accountNumber} /></dd>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <dt className="mono text-[10px] uppercase tracking-[0.14em] text-white/35">Bank</dt>
+                  <dd className="mt-1 text-[14px] text-white">{bank?.bankName || '—'}</dd>
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-white">Mark as Paid</p>
-                  <p className="text-xs text-white/35">{modal.providerId?.name}</p>
+                  <dt className="mono text-[10px] uppercase tracking-[0.14em] text-white/35">Account name</dt>
+                  <dd className="mt-1 text-[14px] text-white">{bank?.accountName || '—'}</dd>
                 </div>
               </div>
-              <button onClick={() => setModal(null)}
-                className="p-1.5 rounded-lg text-white/30 hover:text-white/60 transition">
-                <X size={18} />
-              </button>
-            </div>
+            </dl>
 
-            {/* Checklist */}
-            <div className="p-4 rounded-xl mb-5 space-y-2"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-              <p className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-3">
-                Before confirming — make sure you have:
-              </p>
+            <fieldset className="mt-6 space-y-3">
+              <legend className="mono mb-3 text-[10px] uppercase tracking-[0.16em] text-white/35">Before you confirm</legend>
               {[
-                `Transferred ₦${modal.providerShare?.toLocaleString()} to ${modal.providerId?.name}`,
-                `Bank: ${modal.providerId?.bankDetails?.bankName || '—'}`,
-                `Account: ${modal.providerId?.bankDetails?.accountNumber || '—'}`,
-                `Account Name: ${modal.providerId?.bankDetails?.accountName || '—'}`,
-              ].map((item, i) => (
-                <div key={i} className="flex items-start gap-2 text-xs text-white/40">
-                  <span className="text-green-400 mt-0.5">□</span>
-                  <span>{item}</span>
-                </div>
+                ['amount', <>I sent exactly <span className="mono text-white">{naira(modal.providerShare)}</span></>],
+                ['name', <>The bank app showed <span className="text-white">{bank?.accountName || 'the same name'}</span> before I sent it</>],
+              ].map(([k, text]) => (
+                <label key={k} className="flex cursor-pointer items-start gap-3 text-[14px] text-white/65">
+                  <input type="checkbox" checked={checks[k]} onChange={(e) => setChecks((c) => ({ ...c, [k]: e.target.checked }))}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-green-400" />
+                  <span>{text}</span>
+                </label>
               ))}
-            </div>
+            </fieldset>
 
-            {/* Optional note */}
-            <div className="mb-5">
-              <label className="block text-xs font-semibold uppercase tracking-widest text-white/30 mb-2">
-                Transfer note (optional)
+            <div className="mt-6">
+              <label htmlFor="note" className="mono mb-3 block text-[10px] uppercase tracking-[0.16em] text-white/35">
+                Transfer reference <span className="normal-case tracking-normal text-white/25">· optional, for your records</span>
               </label>
-              <input
-                type="text"
-                value={note}
-                onChange={e => setNote(e.target.value)}
-                placeholder="e.g. Sent via GTB mobile app at 2:30pm"
-                className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-white/20 outline-none"
-                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
-                onFocus={e => e.target.style.borderColor = 'rgba(74,222,128,0.5)'}
-                onBlur={e  => e.target.style.borderColor = 'rgba(255,255,255,0.1)'}
-              />
+              <input id="note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. GTB session ID or time sent"
+                className="w-full border-b border-white/15 bg-transparent pb-3 text-[15px] text-white outline-none placeholder:text-white/20 focus:border-green-400" />
             </div>
 
-            {/* Buttons */}
-            <div className="flex gap-3">
-              <button onClick={() => setModal(null)}
-                className="flex-1 py-3 rounded-xl text-sm font-semibold text-white/50"
-                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                Cancel
+            <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row">
+              <button onClick={closeModal} disabled={releasing}
+                className="inline-flex flex-1 items-center justify-center rounded-full border border-white/15 px-4 py-3 text-[13px] text-white/75 transition hover:border-white/40 hover:text-white disabled:opacity-40">
+                Not yet
               </button>
-              <button onClick={handleMarkPaid} disabled={releasing}
-                className="flex-1 py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-50 flex items-center justify-center gap-2"
-                style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 16px rgba(22,163,74,0.3)' }}>
-                {releasing
-                  ? <><Loader2 size={15} className="animate-spin" /> Confirming...</>
-                  : <><CheckCircle size={15} /> Confirm Payment Sent</>
-                }
+              <button onClick={handleMarkPaid} disabled={releasing || !checks.amount || !checks.name}
+                className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-green-400 px-5 py-3 text-[14px] font-medium text-[#080f0a] transition hover:bg-green-300 disabled:bg-white/[0.06] disabled:text-white/30">
+                {releasing ? <><Loader2 size={15} className="animate-spin" /> Confirming…</> : 'Mark as paid'}
               </button>
             </div>
           </div>
