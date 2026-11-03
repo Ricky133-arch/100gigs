@@ -1,221 +1,164 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { X, Download, Share, Plus } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { usePathname } from 'next/navigation';
+import { useSession } from 'next-auth/react';
+import { X, Share, Loader2 } from 'lucide-react';
 
 const DISMISSED_KEY = '100gigs_install_dismissed';
-const DISMISS_DAYS  = 3;
+const DISMISS_DAYS = 14;    // a "no" means leave them alone for two weeks
+const SHOW_AFTER_MS = 8000; // let people look around before asking
+
+// Pages where an install prompt would get in the way
+const QUIET_PATHS = ['/login', '/signup', '/forgot-password', '/reset-password', '/payment', '/post-job', '/chat'];
+
+const store = {
+  get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+};
+
+function recentlyDismissed() {
+  const t = parseInt(store.get(DISMISSED_KEY) || '', 10);
+  return Number.isFinite(t) && (Date.now() - t) / 864e5 < DISMISS_DAYS;
+}
 
 export default function InstallBanner() {
+  const pathname = usePathname();
+  const { data: session } = useSession();
   const [deferredPrompt, setDeferredPrompt] = useState(null);
-  const [show, setShow]                     = useState(false);
-  const [isIOS, setIsIOS]                   = useState(false);
-  const [isIOSReady, setIsIOSReady]         = useState(false);
+  const [mode, setMode] = useState(null); // null | 'prompt' | 'ios'
+  const [show, setShow] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const timer = useRef(null);
 
   useEffect(() => {
-    // Don't show if already installed (standalone mode)
-    const isStandalone =
-      window.matchMedia('(display-mode: standalone)').matches ||
-      window.navigator.standalone === true;
-    if (isStandalone) return;
+    const standalone =
+      window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    if (standalone || recentlyDismissed()) return;
 
-    // Don't show if dismissed recently
-    const dismissed = localStorage.getItem(DISMISSED_KEY);
-    if (dismissed) {
-      const daysAgo = (Date.now() - parseInt(dismissed)) / (1000 * 60 * 60 * 24);
-      if (daysAgo < DISMISS_DAYS) return;
+    const ua = window.navigator.userAgent;
+    // iPadOS pretends to be a Mac, so also check for a touch screen
+    const iOS = /iphone|ipad|ipod/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
+    const inAppBrowser = /FBAN|FBAV|Instagram|Line\/|Twitter|TikTok/i.test(ua);
+    const safari = /safari/i.test(ua) && !/crios|fxios|edgios|opios/i.test(ua);
+
+    if (iOS) {
+      // Only Safari can add to the home screen on iPhone; in-app browsers can't
+      if (!safari || inAppBrowser) return;
+      setMode('ios');
+      timer.current = setTimeout(() => setShow(true), SHOW_AFTER_MS);
+      return () => clearTimeout(timer.current);
     }
 
-    // Detect iOS Safari
-    const ua    = window.navigator.userAgent;
-    const iosDevice = /iphone|ipad|ipod/i.test(ua);
-    const safari    = /safari/i.test(ua) && !/chrome|crios|fxios/i.test(ua);
-
-    if (iosDevice && safari) {
-      setIsIOS(true);
-      // Show iOS instructions after a short delay
-      setTimeout(() => setIsIOSReady(true), 3000);
-      return;
-    }
-
-    // Android / Desktop — listen for the install prompt
-    const handler = (e) => {
+    const onPrompt = (e) => {
       e.preventDefault();
       setDeferredPrompt(e);
-      // Show banner after 4 seconds on the page
-      setTimeout(() => setShow(true), 4000);
+      setMode('prompt');
+      clearTimeout(timer.current);
+      timer.current = setTimeout(() => setShow(true), SHOW_AFTER_MS);
     };
+    const onInstalled = () => { setShow(false); setDeferredPrompt(null); store.set(DISMISSED_KEY, String(Date.now())); };
 
-    window.addEventListener('beforeinstallprompt', handler);
-    return () => window.removeEventListener('beforeinstallprompt', handler);
+    window.addEventListener('beforeinstallprompt', onPrompt);
+    window.addEventListener('appinstalled', onInstalled);
+    return () => {
+      clearTimeout(timer.current);
+      window.removeEventListener('beforeinstallprompt', onPrompt);
+      window.removeEventListener('appinstalled', onInstalled);
+    };
   }, []);
-
-  // Show iOS banner after delay
-  useEffect(() => {
-    if (isIOSReady) setShow(true);
-  }, [isIOSReady]);
 
   const dismiss = () => {
     setShow(false);
-    localStorage.setItem(DISMISSED_KEY, Date.now().toString());
+    store.set(DISMISSED_KEY, String(Date.now()));
   };
 
   const install = async () => {
     if (!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === 'accepted') {
+    setInstalling(true);
+    try {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
       setShow(false);
-      localStorage.setItem(DISMISSED_KEY, Date.now().toString());
+      if (outcome === 'accepted') store.set(DISMISSED_KEY, String(Date.now()));
+      else dismiss();
+    } catch {
+      setShow(false);
+    } finally {
+      setDeferredPrompt(null);
+      setInstalling(false);
     }
-    setDeferredPrompt(null);
   };
 
-  if (!show) return null;
+  const quiet = QUIET_PATHS.some((p) => pathname?.startsWith(p));
+  if (!show || !mode || quiet) return null;
+
+  // Sit above the bottom nav when it's there (logged in); otherwise at the bottom
+  const bottom = session ? 'calc(6rem + env(safe-area-inset-bottom))' : 'max(1rem, env(safe-area-inset-bottom))';
 
   return (
-    <>
-      {/* Backdrop blur on iOS (since we show step instructions) */}
-      {isIOS && (
-        <div
-          className="fixed inset-0 z-[80] bg-black/40 backdrop-blur-sm"
-          onClick={dismiss}
-        />
-      )}
+    <div
+      role="dialog"
+      aria-label="Install 100Gigs"
+      className="ib fixed inset-x-0 z-[85] mx-auto px-4"
+      style={{ bottom, maxWidth: 480 }}
+    >
+      <style>{`
+        .ib { font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif; }
+        .ib .mono { font-family: var(--font-mono), ui-monospace, monospace; }
+        @keyframes ib-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+        .ib-card { animation: ib-up .45s cubic-bezier(.2,.7,.2,1) both; }
+        @media (prefers-reduced-motion: reduce) { .ib-card { animation: none; } }
+      `}</style>
 
-      {/* Banner */}
-      <div
-        className="fixed z-[85] left-0 right-0 mx-auto px-4"
-        style={{
-          bottom:   isIOS ? '0' : '96px', // above navbar on non-iOS
-          maxWidth: '480px',
-          animation: 'slideUp 0.4s cubic-bezier(.22,1,.36,1) forwards',
-        }}
-      >
-        <style>{`
-          @keyframes slideUp {
-            from { opacity: 0; transform: translateY(24px); }
-            to   { opacity: 1; transform: translateY(0); }
-          }
-        `}</style>
+      <div className="ib-card relative rounded-xl border border-white/10 bg-[#0b150e]/95 text-[#e9efe9] shadow-[0_12px_40px_rgba(0,0,0,0.55)] backdrop-blur">
+        <button onClick={dismiss} aria-label="Not now"
+          className="absolute right-2.5 top-2.5 flex h-8 w-8 items-center justify-center rounded-full text-white/35 transition hover:bg-white/[0.06] hover:text-white">
+          <X size={15} />
+        </button>
 
-        <div
-          className="w-full rounded-2xl overflow-hidden"
-          style={{
-            background:       'rgba(13, 20, 13, 0.96)',
-            border:           '1px solid rgba(74,222,128,0.25)',
-            boxShadow:        '0 -4px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05) inset',
-            backdropFilter:   'blur(24px)',
-            paddingBottom:    isIOS ? '32px' : '0',
-          }}
-        >
-          {/* ── Android / Desktop banner ── */}
-          {!isIOS && (
-            <div className="flex items-center gap-4 p-4">
-              {/* App icon */}
-              <div
-                className="w-14 h-14 rounded-2xl flex items-center justify-center shrink-0"
-                style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 16px rgba(22,163,74,0.35)' }}
-              >
-                <span className="text-white font-black text-2xl">G</span>
-              </div>
-
-              {/* Text */}
-              <div className="flex-1 min-w-0">
-                <p className="text-white font-bold text-sm leading-tight">Add 100Gigs to Home Screen</p>
-                <p className="text-white/40 text-xs mt-0.5 leading-relaxed">
-                  Get instant notifications for new jobs & messages
-                </p>
-              </div>
-
-              {/* Actions */}
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={dismiss}
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-white/30 hover:text-white/60 hover:bg-white/5 transition"
-                >
-                  <X size={16} />
-                </button>
-                <button
-                  onClick={install}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white transition active:scale-95"
-                  style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 12px rgba(22,163,74,0.4)' }}
-                >
-                  <Download size={14} /> Install
-                </button>
-              </div>
+        {mode === 'prompt' ? (
+          <div className="flex items-center gap-4 py-4 pl-4 pr-12">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#080f0a] ring-1 ring-white/10">
+              <span className="text-[13px] font-semibold tracking-tight"><span className="text-green-400">100</span>G</span>
             </div>
-          )}
-
-          {/* ── iOS instructions ── */}
-          {isIOS && (
-            <div className="p-5">
-              {/* Header */}
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0"
-                    style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)' }}
-                  >
-                    <span className="text-white font-black text-xl">G</span>
-                  </div>
-                  <div>
-                    <p className="text-white font-bold text-sm">Install 100Gigs</p>
-                    <p className="text-white/40 text-xs">Works like a real app</p>
-                  </div>
-                </div>
-                <button
-                  onClick={dismiss}
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-white/30 hover:text-white/60 transition"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-
-              {/* Steps */}
-              <div className="space-y-3">
-                <Step number={1} icon={Share} color="#60a5fa">
-                  Tap the <strong className="text-white">Share</strong> button
-                  <span className="text-white/40"> at the bottom of your browser</span>
-                </Step>
-                <Step number={2} icon={Plus} color="#4ade80">
-                  Scroll down and tap{' '}
-                  <strong className="text-white">"Add to Home Screen"</strong>
-                </Step>
-                <Step number={3} icon={Download} color="#a78bfa">
-                  Tap <strong className="text-white">Add</strong>
-                  <span className="text-white/40"> — done! Open it from your home screen</span>
-                </Step>
-              </div>
-
-              {/* Arrow pointing down to the share button */}
-              <div className="flex justify-center mt-4">
-                <div className="flex flex-col items-center gap-1 text-white/20">
-                  <span className="text-xs">Share button is down here</span>
-                  <span className="text-lg">↓</span>
-                </div>
-              </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[14px] font-medium text-white">Put 100Gigs on your home screen</p>
+              <p className="mt-0.5 text-[12px] leading-snug text-white/45">Opens faster, and you get alerts for new jobs and messages.</p>
             </div>
-          )}
-        </div>
-      </div>
-    </>
-  );
-}
+          </div>
+        ) : (
+          <div className="py-4 pl-4 pr-12">
+            <p className="text-[14px] font-medium text-white">Put 100Gigs on your home screen</p>
+            <p className="mt-0.5 text-[12px] leading-snug text-white/45">It opens like an app, and you get job and message alerts.</p>
+            <ol className="mt-4 space-y-2.5 text-[13px] text-white/70">
+              <li className="flex items-center gap-3">
+                <span className="mono w-4 text-[11px] text-green-400">1</span>
+                <span>Tap <Share size={14} className="mx-0.5 inline -translate-y-px text-white" aria-label="Share" /> <span className="text-white">Share</span> at the bottom of Safari</span>
+              </li>
+              <li className="flex items-center gap-3">
+                <span className="mono w-4 text-[11px] text-green-400">2</span>
+                <span>Choose <span className="text-white">Add to Home Screen</span></span>
+              </li>
+              <li className="flex items-center gap-3">
+                <span className="mono w-4 text-[11px] text-green-400">3</span>
+                <span>Tap <span className="text-white">Add</span></span>
+              </li>
+            </ol>
+          </div>
+        )}
 
-// ── Small step component for iOS instructions ────────────────────────────────
-function Step({ number, icon: Icon, color, children }) {
-  return (
-    <div className="flex items-start gap-3">
-      <div
-        className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-        style={{ background: `${color}20`, border: `1px solid ${color}40` }}
-      >
-        <span className="text-xs font-bold" style={{ color }}>{number}</span>
+        {mode === 'prompt' && (
+          <div className="flex items-center justify-end gap-1 border-t border-white/10 px-2.5 py-2">
+            <button onClick={dismiss} className="rounded-full px-3 py-2 text-[13px] text-white/50 transition hover:text-white">
+              Not now
+            </button>
+            <button onClick={install} disabled={installing}
+              className="inline-flex items-center gap-2 rounded-full bg-green-400 px-5 py-2 text-[13px] font-medium text-[#080f0a] transition hover:bg-green-300 disabled:opacity-60">
+              {installing && <Loader2 size={13} className="animate-spin" />} Install
+            </button>
+          </div>
+        )}
       </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-white/50 text-sm leading-relaxed">{children}</p>
-      </div>
-      <Icon size={16} style={{ color }} className="shrink-0 mt-1" />
     </div>
   );
 }
