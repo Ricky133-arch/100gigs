@@ -36,7 +36,13 @@ function LoginForm() {
         redirect: false,
       });
       if (result?.error) {
-        setError('That email and password don’t match. Check for typos and try again.');
+        // Our server sends clear messages (suspended, too many attempts, wrong details);
+        // "CredentialsSignin" is next-auth's generic fallback
+        setError(
+          result.error && result.error !== 'CredentialsSignin'
+            ? result.error
+            : 'That email and password don’t match. Check for typos and try again.'
+        );
         setLoading(false);
         return;
       }
