@@ -3,151 +3,181 @@ import { useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import {
-  Bell, ShieldCheck, ShieldX, MessageCircle,
-  Briefcase, CheckCircle, XCircle, AlertTriangle, Info,
-} from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { ArrowUpRight } from 'lucide-react';
 
-const glass = {
-  background:          'rgba(255,255,255,0.04)',
-  border:              '1px solid rgba(255,255,255,0.08)',
-  backdropFilter:      'blur(12px)',
-  WebkitBackdropFilter:'blur(12px)',
+/* ── helpers ─────────────────────────────────────────────── */
+
+// Short label + tone per notification type
+const TYPE = {
+  new_application:       { tag: 'Application',  tone: 'text-white/55' },
+  application_accepted:  { tag: 'Hired',        tone: 'text-green-400' },
+  application_rejected:  { tag: 'Not selected', tone: 'text-white/40' },
+  new_message:           { tag: 'Message',      tone: 'text-white/55' },
+  job_posted:            { tag: 'Job posted',   tone: 'text-green-400' },
+  verification_approved: { tag: 'Verified',     tone: 'text-green-400' },
+  verification_rejected: { tag: 'Verification', tone: 'text-red-400' },
+  account_suspended:     { tag: 'Account',      tone: 'text-red-400' },
+  account_reinstated:    { tag: 'Account',      tone: 'text-green-400' },
+  system:                { tag: 'Update',       tone: 'text-amber-300' },
 };
 
-// Icon and color per notification type
-const TYPE_CONFIG = {
-  new_application:       { icon: Briefcase,     color: '#60a5fa', bg: 'rgba(96,165,250,0.12)'  },
-  application_accepted:  { icon: CheckCircle,   color: '#4ade80', bg: 'rgba(74,222,128,0.12)'  },
-  application_rejected:  { icon: XCircle,       color: '#f87171', bg: 'rgba(248,113,113,0.12)' },
-  new_message:           { icon: MessageCircle, color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },
-  job_posted:            { icon: Briefcase,     color: '#4ade80', bg: 'rgba(74,222,128,0.12)'  },
-  verification_approved: { icon: ShieldCheck,   color: '#4ade80', bg: 'rgba(74,222,128,0.12)'  },
-  verification_rejected: { icon: ShieldX,       color: '#f87171', bg: 'rgba(248,113,113,0.12)' },
-  account_suspended:     { icon: AlertTriangle, color: '#f87171', bg: 'rgba(248,113,113,0.12)' },
-  account_reinstated:    { icon: CheckCircle,   color: '#4ade80', bg: 'rgba(74,222,128,0.12)'  },
-  system:                { icon: Info,          color: '#facc15', bg: 'rgba(250,204,21,0.12)'  },
-};
+function timeAgo(date) {
+  if (!date) return '';
+  const s = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  return new Date(date).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' });
+}
+
+function groupLabel(date) {
+  const d = new Date(date);
+  const now = new Date();
+  const yest = new Date(); yest.setDate(now.getDate() - 1);
+  if (d.toDateString() === now.toDateString()) return 'Today';
+  if (d.toDateString() === yest.toDateString()) return 'Yesterday';
+  if (now - d < 7 * 864e5) return 'This week';
+  return 'Earlier';
+}
+
+/* ── page ────────────────────────────────────────────────── */
 
 export default function NotificationsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const [notifications, setNotifications] = useState([]);
-  const [loading,        setLoading]       = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (status === 'unauthenticated') router.push('/login');
-  }, [status]);
+    if (status === 'unauthenticated') router.push('/login?callbackUrl=%2Fnotifications');
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!session) return;
-    fetchNotifications();
-  }, [session]);
+    if (session) fetchNotifications();
+  }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchNotifications = async () => {
+    setFailed(false);
+    setLoading(true);
     try {
       const res = await fetch('/api/notifications');
-      if (!res.ok) return;
+      if (!res.ok) throw new Error('Failed');
       const data = await res.json();
       setNotifications(data.notifications || []);
-
-      // Mark all as read
+      // Mark all as read on the server; the unread dots stay visible
+      // for this visit so people can still see what's new
       fetch('/api/notifications', { method: 'PATCH' }).catch(console.error);
     } catch (err) {
       console.error(err);
+      setFailed(true);
     } finally {
       setLoading(false);
     }
   };
 
-  if (status === 'loading' || loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-[#080f0a]">
-        <div className="w-10 h-10 rounded-full border-2 border-green-500/20 border-t-green-500 animate-spin" />
-      </div>
-    );
+  const unreadCount = notifications.filter((n) => !n.isRead).length;
+
+  // Group into Today / Yesterday / This week / Earlier, keeping order
+  const groups = [];
+  for (const n of notifications) {
+    const g = groupLabel(n.createdAt);
+    const last = groups[groups.length - 1];
+    if (last && last.label === g) last.items.push(n);
+    else groups.push({ label: g, items: [n] });
   }
 
   return (
-    <div className="min-h-screen bg-[#080f0a] relative overflow-x-hidden">
+    <div className="nt min-h-screen bg-[#080f0a] text-[#e9efe9] antialiased">
       <style>{`
-        @keyframes drift {
-          0%,100% { transform:translate(0,0) scale(1); }
-          33% { transform:translate(30px,-20px) scale(1.05); }
-          66% { transform:translate(-20px,15px) scale(0.97); }
-        }
-        .drift { animation: drift 14s ease-in-out infinite; }
+        .nt { font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif; }
+        .serif { font-family: var(--font-serif), Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+        .mono { font-family: var(--font-mono), ui-monospace, monospace; }
       `}</style>
 
-      {/* Orbs */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-[-10%] left-[-5%] w-[500px] h-[500px] rounded-full drift"
-          style={{ background: 'radial-gradient(circle, rgba(22,163,74,0.12) 0%, transparent 70%)' }} />
-        <div className="absolute bottom-[-10%] right-[-5%] w-[500px] h-[500px] rounded-full drift"
-          style={{ background: 'radial-gradient(circle, rgba(16,185,129,0.1) 0%, transparent 70%)', animationDelay: '5s' }} />
-      </div>
-
-      <div className="relative max-w-2xl mx-auto px-4 py-10">
-
-        {/* Header */}
-        <div className="mb-6">
-          <p className="text-xs font-semibold uppercase tracking-widest text-green-400/60 mb-1">Activity</p>
-          <h1 className="text-3xl font-bold text-white">Notifications</h1>
-          <p className="text-white/30 text-sm mt-1">Your recent activity and updates</p>
-        </div>
-
-        {/* List */}
-        {notifications.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center" style={glass}>
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4"
-              style={{ background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.15)' }}>
-              <Bell size={28} className="text-green-400/50" />
-            </div>
-            <p className="text-white/30 text-sm">No notifications yet</p>
-            <p className="text-white/20 text-xs mt-1">
-              You'll see job updates, messages, and more here
+      <div className="mx-auto max-w-3xl px-5 pb-16 pt-10 md:px-8 md:pt-16">
+        <header className="mb-12">
+          <h1 className="serif text-5xl leading-none md:text-7xl">Notifications</h1>
+          {!loading && !failed && (
+            <p className="mono mt-4 text-[12px] text-white/40">
+              {notifications.length === 0
+                ? 'Nothing yet'
+                : unreadCount > 0
+                  ? <><span className="text-green-400">{unreadCount} new</span> · {notifications.length} total</>
+                  : 'All caught up'}
             </p>
+          )}
+        </header>
+
+        {status === 'loading' || loading ? (
+          <ul className="border-t border-white/10">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <li key={i} className="border-b border-white/[0.07] py-5">
+                <div className="mb-2.5 h-3 w-24 animate-pulse bg-white/[0.06]" />
+                <div className="mb-2 h-4 w-2/3 animate-pulse bg-white/[0.08]" />
+                <div className="h-3 w-1/2 animate-pulse bg-white/[0.05]" />
+              </li>
+            ))}
+          </ul>
+        ) : failed ? (
+          <div className="border-t border-white/10 py-14">
+            <p className="text-[15px] text-white/60">Couldn’t load your notifications.</p>
+            <button onClick={fetchNotifications}
+              className="mt-5 border-b border-green-400 pb-0.5 text-[15px] text-white transition hover:text-green-400">
+              Try again
+            </button>
+          </div>
+        ) : notifications.length === 0 ? (
+          <div className="border-t border-white/10 py-14">
+            <p className="serif text-3xl leading-tight">Quiet for now.</p>
+            <p className="mt-3 max-w-sm text-[14px] leading-relaxed text-white/45">
+              When someone applies, messages you, or hires you, you’ll see it here.
+            </p>
+            <Link href="/browse" className="mt-6 inline-flex items-center gap-1.5 text-[14px] text-green-400 hover:underline underline-offset-4">
+              Browse open jobs <ArrowUpRight size={14} />
+            </Link>
           </div>
         ) : (
-          <div className="rounded-2xl overflow-hidden" style={glass}>
-            {notifications.map((notif, i) => {
-              const config = TYPE_CONFIG[notif.type] || TYPE_CONFIG.system;
-              const Icon   = config.icon;
-              const isLast = i === notifications.length - 1;
-
-              return (
-                <Link
-                  key={notif._id}
-                  href={notif.url || '/'}
-                  className="flex items-start gap-4 px-5 py-4 transition hover:bg-white/5"
-                  style={{
-                    borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.05)',
-                    background: notif.isRead ? 'transparent' : 'rgba(74,222,128,0.03)',
-                  }}
-                >
-                  {/* Icon */}
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5"
-                    style={{ background: config.bg }}>
-                    <Icon size={18} style={{ color: config.color }} />
-                  </div>
-
-                  {/* Content */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-sm font-semibold text-white leading-snug">{notif.title}</p>
-                      {!notif.isRead && (
-                        <span className="w-2 h-2 rounded-full bg-green-400 shrink-0 mt-1.5" />
-                      )}
-                    </div>
-                    <p className="text-xs text-white/45 mt-0.5 leading-relaxed">{notif.body}</p>
-                    <p className="text-[11px] text-white/20 mt-1.5">
-                      {formatDistanceToNow(new Date(notif.createdAt), { addSuffix: true })}
-                    </p>
-                  </div>
-                </Link>
-              );
-            })}
+          <div className="space-y-12">
+            {groups.map((group) => (
+              <section key={group.label}>
+                <p className="mono mb-3 text-[10px] uppercase tracking-[0.16em] text-white/35">{group.label}</p>
+                <ul className="border-t border-white/10">
+                  {group.items.map((n) => {
+                    const t = TYPE[n.type] || TYPE.system;
+                    const unread = !n.isRead;
+                    const Row = n.url ? Link : 'div';
+                    return (
+                      <li key={n._id}>
+                        <Row {...(n.url ? { href: n.url } : {})}
+                          className={`group relative grid grid-cols-[1fr_auto] gap-6 border-b border-white/[0.07] py-5 pl-5 pr-1 ${
+                            n.url ? 'transition-colors hover:bg-white/[0.02]' : ''
+                          }`}>
+                          {unread && <span className="absolute left-0 top-[1.6rem] h-1.5 w-1.5 rounded-full bg-green-400" aria-label="Unread" />}
+                          <div className="min-w-0">
+                            <p className="mono mb-1.5 text-[11px]">
+                              <span className={t.tone}>{t.tag}</span>
+                              <span className="text-white/30"> · {timeAgo(n.createdAt)}</span>
+                            </p>
+                            <p className={`text-[15px] leading-snug ${unread ? 'font-medium text-white' : 'text-white/80'} ${n.url ? 'transition-colors group-hover:text-green-400' : ''}`}>
+                              {n.title}
+                            </p>
+                            {n.body && <p className="mt-1 text-[13px] leading-relaxed text-white/45">{n.body}</p>}
+                          </div>
+                          {n.url && (
+                            <ArrowUpRight size={16} className="mt-1 text-white/20 transition group-hover:text-green-400" />
+                          )}
+                        </Row>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ))}
           </div>
         )}
       </div>
