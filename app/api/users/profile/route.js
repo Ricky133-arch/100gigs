@@ -19,7 +19,7 @@ const PRIVATE_FIELDS =
   '-password -resetPasswordToken -resetPasswordExpires -resetToken -resetTokenExpiry -pushSubscriptions -__v';
 
 const SOCIAL_KEYS = ['instagram', 'facebook', 'twitter', 'tiktok', 'linkedin', 'youtube'];
-const USERNAME_RE = /^[a-z0-9_.-]{3,30}$/;
+const USERNAME_RE = /^[a-z0-9_-]{3,30}$/; // same rule as /u/[username]
 const HANDLE_RE = /^@?[\w.\-]{1,100}$/;
 
 const str = (v) => (typeof v === 'string' ? v.trim() : null);
@@ -125,7 +125,7 @@ export async function PATCH(request) {
         $unset.username = 1;
       } else {
         if (!USERNAME_RE.test(username)) {
-          return bad('Usernames are 3–30 characters: letters, numbers, dots, dashes and underscores.');
+          return bad('Usernames are 3–30 characters: letters, numbers, dashes and underscores.');
         }
         const taken = await User.exists({ username, _id: { $ne: me } });
         if (taken) return bad('This username is already taken. Please choose another.', 409);
