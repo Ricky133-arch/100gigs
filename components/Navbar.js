@@ -198,15 +198,16 @@ export default function Navbar() {
                   <Link href="/notifications" className="flex items-center gap-3 px-4 py-2.5 text-[13px] text-white/75 transition hover:bg-white/[0.04] hover:text-white">
                     <Bell size={15} strokeWidth={1.5} className="text-green-400" />
                     <span>Notifications</span>
-                    <span className="ml-auto flex items-center gap-2">
-                      {unreadNotifications > 0 && (
-                        <span className="nav-mono rounded-full bg-green-400 px-2 py-0.5 text-[10px] text-[#080f0a]">
-                          {fmt(unreadNotifications)}
-                        </span>
-                      )}
-                      <NotificationBell />
-                    </span>
+                    {unreadNotifications > 0 && (
+                      <span className="nav-mono ml-auto rounded-full bg-green-400 px-2 py-0.5 text-[10px] text-[#080f0a]">
+                        {fmt(unreadNotifications)}
+                      </span>
+                    )}
                   </Link>
+
+                  {/* Own row, so the switch never triggers the link above.
+                      Hides itself on devices that can't get alerts. */}
+                  <NotificationBell asRow />
 
                   <div className="flex cursor-not-allowed items-center gap-3 px-4 py-2.5 text-[13px] text-white/35">
                     <Settings size={15} strokeWidth={1.5} />
