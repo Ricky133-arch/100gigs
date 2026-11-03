@@ -1,11 +1,53 @@
 'use client';
 import { useSession } from 'next-auth/react';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { MessageCircle, Send, ArrowLeft } from 'lucide-react';
+import { ArrowLeft, ArrowUp, CornerUpLeft, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatDistanceToNow } from 'date-fns';
-import { Suspense } from 'react';
+
+/* ── helpers ─────────────────────────────────────────────── */
+
+function shortAgo(date) {
+  if (!date) return '';
+  const s = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+  if (s < 60) return 'now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d`;
+  return new Date(date).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' });
+}
+
+const clock = (date) =>
+  new Date(date).toLocaleTimeString('en-NG', { hour: 'numeric', minute: '2-digit' });
+
+function dayLabel(date) {
+  const d = new Date(date);
+  const today = new Date();
+  const yest = new Date(); yest.setDate(today.getDate() - 1);
+  const same = (a, b) => a.toDateString() === b.toDateString();
+  if (same(d, today)) return 'Today';
+  if (same(d, yest)) return 'Yesterday';
+  return d.toLocaleDateString('en-NG', {
+    weekday: 'short', day: 'numeric', month: 'short',
+    year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric',
+  });
+}
+
+function Avatar({ name, src, size = 36 }) {
+  return (
+    <div
+      className="flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-green-400 font-semibold text-[#080f0a]"
+      style={{ width: size, height: size, fontSize: size * 0.4 }}
+    >
+      {src ? <img src={src} alt={name} className="h-full w-full object-cover" /> : name?.charAt(0).toUpperCase()}
+    </div>
+  );
+}
+
+/* ── page ────────────────────────────────────────────────── */
 
 function ChatContent() {
   const { data: session, status } = useSession();
@@ -19,19 +61,23 @@ function ChatContent() {
   const [loading, setLoading] = useState(true);
   const [activeChat, setActiveChat] = useState(null);
   const [replyTo, setReplyTo] = useState(null);
+  const [highlightedId, setHighlightedId] = useState(null);
+
   const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
   const pollRef = useRef(null);
   const longPressTimer = useRef(null);
   const inputRef = useRef(null);
+  const prevMessageCountRef = useRef(0);
+  const isNearBottomRef = useRef(true);
 
+  const myId = session?.user?.id;
   const getConversationId = (id1, id2) => [id1, id2].sort().join('_');
-  const conversationId = activeChat
-    ? getConversationId(session?.user?.id, activeChat.otherId)
-    : null;
+  const conversationId = activeChat ? getConversationId(myId, activeChat.otherId) : null;
 
   useEffect(() => {
     if (status === 'unauthenticated') router.push('/login');
-  }, [status]);
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!session) return;
@@ -39,7 +85,7 @@ function ChatContent() {
     const name = searchParams.get('name');
     if (to && name) setActiveChat({ otherId: to, otherName: decodeURIComponent(name), otherAvatar: null });
     fetchConversations();
-  }, [session]);
+  }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (conversationId) {
@@ -47,44 +93,33 @@ function ChatContent() {
       pollRef.current = setInterval(fetchMessages, 3000);
     }
     return () => clearInterval(pollRef.current);
-  }, [conversationId]);
+  }, [conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Track the message container + whether the user is near the bottom
-  const messagesContainerRef = useRef(null);
-  const prevMessageCountRef = useRef(0);
-  const isNearBottomRef = useRef(true);
-
-  const checkIfNearBottom = () => {
-    const el = messagesContainerRef.current;
-    if (!el) return true;
-    const threshold = 120; // px from bottom counts as "at the bottom"
-    return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-  };
-
+  // ── Scroll handling ───────────────────────────────────────
   const handleMessagesScroll = () => {
-    isNearBottomRef.current = checkIfNearBottom();
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
   };
 
   useEffect(() => {
-    const isNewMessage = messages.length > prevMessageCountRef.current;
+    const isNew = messages.length > prevMessageCountRef.current;
+    const firstLoad = prevMessageCountRef.current === 0;
     prevMessageCountRef.current = messages.length;
-
-    // Only auto-scroll if a message was actually added AND the user
-    // was already near the bottom (i.e. not reading older history).
-    if (isNewMessage && isNearBottomRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isNew && isNearBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: firstLoad ? 'auto' : 'smooth' });
     }
   }, [messages]);
 
-  // Reset bottom-tracking whenever the active conversation changes
   useEffect(() => {
     isNearBottomRef.current = true;
     prevMessageCountRef.current = 0;
+    setMessages([]); // don't flash the previous conversation's messages
   }, [conversationId]);
 
-  // Clear reply when switching conversations
   useEffect(() => { setReplyTo(null); }, [activeChat]);
 
+  // ── Data ──────────────────────────────────────────────────
   const fetchConversations = async () => {
     try {
       const res = await fetch('/api/chat');
@@ -101,53 +136,52 @@ function ChatContent() {
       const res = await fetch(`/api/chat/${conversationId}`);
       if (!res.ok) return;
       const data = await res.json();
-      setMessages(Array.isArray(data) ? data : []);
+      if (!Array.isArray(data)) return;
+      // Keep any message still being sent, so a poll doesn't make it vanish
+      setMessages((prev) => {
+        const pending = prev.filter((m) => m._optimistic);
+        return pending.length ? [...data, ...pending] : data;
+      });
     } catch (err) { console.error(err); }
   };
 
-  // Long press handlers
+  // ── Reply: long-press on mobile, button on desktop ───────
+  const startReply = (msg) => {
+    setReplyTo(msg);
+    inputRef.current?.focus();
+  };
   const handleLongPressStart = (msg) => {
-    longPressTimer.current = setTimeout(() => {
-      setReplyTo(msg);
-      inputRef.current?.focus();
-    }, 500);
+    longPressTimer.current = setTimeout(() => startReply(msg), 500);
   };
+  const handleLongPressEnd = () => clearTimeout(longPressTimer.current);
 
-  const handleLongPressEnd = () => {
-    clearTimeout(longPressTimer.current);
-  };
-
-  const cancelReply = () => setReplyTo(null);
-
-  // ── Jump to the original message when tapping a quoted reply ───────
-  const [highlightedId, setHighlightedId] = useState(null);
   const jumpToMessage = (id) => {
     if (!id) return;
     const el = document.getElementById(`msg-${id}`);
-    if (!el) return; // original message not in the currently loaded list
+    if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     setHighlightedId(id);
-    setTimeout(() => setHighlightedId(null), 1200);
+    setTimeout(() => setHighlightedId(null), 1400);
   };
 
+  const senderNameOf = (msg) =>
+    msg.sender?._id === myId || msg.sender === myId ? 'You' : msg.sender?.name || activeChat?.otherName;
+
+  // ── Send ──────────────────────────────────────────────────
   const sendMessage = async (e) => {
     e.preventDefault();
     const content = newMessage.trim();
-    if (!content || !activeChat) return;
+    if (!content || !activeChat || sending) return;
 
-    // Snapshot the reply being sent before clearing state
-    const replySnapshot = replyTo ? {
-      _id: replyTo._id,
-      content: replyTo.content,
-      senderName: replyTo.sender?.name || (replyTo.sender?._id === session?.user?.id ? 'You' : activeChat.otherName),
-    } : null;
+    const replySnapshot = replyTo
+      ? { _id: replyTo._id, content: replyTo.content, senderName: senderNameOf(replyTo) }
+      : null;
 
-    // ── Optimistic UI: show the message immediately, before the server responds ──
     const tempId = `temp-${Date.now()}`;
     const optimisticMsg = {
       _id: tempId,
       conversationId,
-      sender: { _id: session.user.id, name: session.user.name },
+      sender: { _id: myId, name: session.user.name },
       receiver: activeChat.otherId,
       content,
       createdAt: new Date().toISOString(),
@@ -156,327 +190,275 @@ function ChatContent() {
       _optimistic: true,
     };
 
-    setMessages(prev => [...prev, optimisticMsg]);
+    setMessages((prev) => [...prev, optimisticMsg]);
     setNewMessage('');
     setReplyTo(null);
     setSending(true);
-    // Sending your own message should always snap you to the bottom
     isNearBottomRef.current = true;
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          receiverId: activeChat.otherId,
-          content,
-          conversationId,
-          replyTo: replySnapshot,
-        }),
+        body: JSON.stringify({ receiverId: activeChat.otherId, content, conversationId, replyTo: replySnapshot }),
       });
-
       if (!res.ok) {
-        toast.error('Failed to send message');
-        // Roll back the optimistic message on failure
-        setMessages(prev => prev.filter(m => m._id !== tempId));
+        toast.error('Message not sent. Try again.');
+        setMessages((prev) => prev.filter((m) => m._id !== tempId));
+        setNewMessage(content); // give the text back so nothing is lost
         return;
       }
-
       const saved = await res.json();
-
-      // Swap the optimistic message for the real saved one
-      setMessages(prev => prev.map(m => m._id === tempId ? saved : m));
-
-      // Refresh conversations list in the background — don't block the UI on it
+      setMessages((prev) => {
+        const withoutTemp = prev.filter((m) => m._id !== tempId);
+        return withoutTemp.some((m) => m._id === saved._id) ? withoutTemp : [...withoutTemp, saved];
+      });
       fetchConversations();
     } catch {
       toast.error('Something went wrong');
-      setMessages(prev => prev.filter(m => m._id !== tempId));
+      setMessages((prev) => prev.filter((m) => m._id !== tempId));
+      setNewMessage(content);
     } finally {
       setSending(false);
     }
   };
 
   const openConversation = (conv) => {
-    const other = conv.sender?._id === session?.user?.id ? conv.receiver : conv.sender;
+    const other = conv.sender?._id === myId ? conv.receiver : conv.sender;
     if (!other) return;
     setActiveChat({ otherId: other._id, otherName: other.name, otherAvatar: other.avatar });
   };
 
   if (status === 'loading') {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-[#080f0a]">
-        <div className="w-10 h-10 rounded-full border-2 border-green-500/20 border-t-green-500 animate-spin" />
+      <div className="flex min-h-screen items-center justify-center bg-[#080f0a]">
+        <p className="text-[11px] uppercase tracking-[0.18em] text-white/35" style={{ fontFamily: 'var(--font-mono), monospace' }}>
+          Loading…
+        </p>
       </div>
     );
   }
-
   if (!session) return null;
 
-  const glassPanel = {
-    background: 'rgba(255,255,255,0.04)',
-    border: '1px solid rgba(255,255,255,0.08)',
-    backdropFilter: 'blur(16px)',
-    WebkitBackdropFilter: 'blur(16px)',
-  };
+  const isNewThread = activeChat && !conversations.some((c) => {
+    const other = c.sender?._id === myId ? c.receiver : c.sender;
+    return other?._id === activeChat.otherId;
+  });
 
   return (
-    <div className="min-h-screen bg-[#080f0a] relative overflow-hidden">
+    <div className="ch bg-[#080f0a] text-[#e9efe9] antialiased">
       <style>{`
-        @keyframes drift {
-          0%,100% { transform:translate(0,0) scale(1); }
-          33% { transform:translate(30px,-20px) scale(1.05); }
-          66% { transform:translate(-20px,15px) scale(0.97); }
-        }
-        .drift { animation: drift 14s ease-in-out infinite; }
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+        .ch { font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif; }
+        .serif { font-family: var(--font-serif), Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+        .mono { font-family: var(--font-mono), ui-monospace, monospace; }
+        .ch ::-webkit-scrollbar { width: 6px; }
+        .ch ::-webkit-scrollbar-track { background: transparent; }
+        .ch ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 6px; }
+        @keyframes flash { 0%,100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); } 25% { box-shadow: 0 0 0 3px rgba(74,222,128,0.55); } }
+        .flash { animation: flash 1.4s ease; }
       `}</style>
 
-      {/* Background orbs */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-[-10%] left-[-5%] w-[500px] h-[500px] rounded-full drift"
-          style={{ background: 'radial-gradient(circle, rgba(22,163,74,0.12) 0%, transparent 70%)' }} />
-        <div className="absolute bottom-[-10%] right-[-5%] w-[500px] h-[500px] rounded-full drift"
-          style={{ background: 'radial-gradient(circle, rgba(16,185,129,0.1) 0%, transparent 70%)', animationDelay: '5s' }} />
-        <div className="absolute inset-0 opacity-[0.025]" style={{
-          backgroundImage: 'linear-gradient(rgba(255,255,255,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.8) 1px, transparent 1px)',
-          backgroundSize: '72px 72px',
-        }} />
-      </div>
+      {/* Height leaves room for the floating bottom nav (6rem) */}
+      <div className="mx-auto flex h-[calc(100dvh-6rem)] max-w-6xl flex-col md:px-8 md:pt-8">
 
-      <div className="relative max-w-6xl mx-auto px-4 py-8 h-screen flex flex-col">
-
-        {/* Header */}
-        <div className="mb-5 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl flex items-center justify-center"
-            style={{ background: 'rgba(74,222,128,0.12)' }}>
-            <MessageCircle size={16} className="text-green-400" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-white">Messages</h1>
-            <p className="text-xs text-white/30">Your conversations</p>
-          </div>
+        {/* Page header — hidden on mobile while a chat is open */}
+        <div className={`px-5 pb-6 pt-8 md:px-0 md:pt-0 ${activeChat ? 'hidden md:block' : ''}`}>
+          <h1 className="serif text-5xl leading-none md:text-6xl">Messages</h1>
         </div>
 
-        {/* Chat layout */}
-        <div className="flex-1 grid lg:grid-cols-12 gap-4 min-h-0">
+        <div className="grid min-h-0 flex-1 border-white/10 md:grid-cols-[320px_1fr] md:border lg:grid-cols-[360px_1fr]">
 
-          {/* Sidebar */}
-          <div
-            className={`lg:col-span-4 rounded-2xl flex flex-col overflow-hidden ${activeChat ? 'hidden lg:flex' : 'flex'}`}
-            style={glassPanel}
-          >
-            <div className="px-4 py-3.5 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
-              <p className="text-xs font-semibold uppercase tracking-widest text-white/30">Conversations</p>
+          {/* ─── Conversation list ─── */}
+          <aside className={`min-h-0 flex-col border-white/10 md:border-r ${activeChat ? 'hidden md:flex' : 'flex'}`}>
+            <div className="mono border-b border-t border-white/10 px-5 py-3 text-[10px] uppercase tracking-[0.16em] text-white/35 md:border-t-0">
+              Conversations
             </div>
 
-            <div className="flex-1 overflow-y-auto">
-              {activeChat && !conversations.find(c => {
-                const other = c.sender?._id === session?.user?.id ? c.receiver : c.sender;
-                return other?._id === activeChat.otherId;
-              }) && (
-                <button onClick={() => setActiveChat(activeChat)}
-                  className="w-full px-4 py-3.5 flex items-center gap-3 text-left border-b"
-                  style={{ background: 'rgba(74,222,128,0.08)', borderColor: 'rgba(255,255,255,0.05)' }}>
-                  <div className="w-9 h-9 rounded-full bg-green-500 flex items-center justify-center text-white text-sm font-bold shrink-0">
-                    {activeChat.otherName?.charAt(0).toUpperCase()}
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {isNewThread && (
+                <div className="flex items-center gap-3 border-b border-white/[0.07] bg-white/[0.03] px-5 py-4">
+                  <Avatar name={activeChat.otherName} src={activeChat.otherAvatar} />
+                  <div className="min-w-0">
+                    <p className="truncate text-[14px] font-medium text-white">{activeChat.otherName}</p>
+                    <p className="mono text-[11px] text-green-400">New conversation</p>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-white">{activeChat.otherName}</p>
-                    <p className="text-xs text-white/30">New conversation</p>
-                  </div>
-                </button>
+                </div>
               )}
 
               {loading ? (
-                <div className="p-4 space-y-4">
-                  {[1,2,3].map(i => (
-                    <div key={i} className="flex gap-3 animate-pulse">
-                      <div className="w-9 h-9 rounded-full shrink-0" style={{ background: 'rgba(255,255,255,0.06)' }} />
-                      <div className="flex-1 space-y-2">
-                        <div className="h-3 rounded-lg w-3/4" style={{ background: 'rgba(255,255,255,0.06)' }} />
-                        <div className="h-2 rounded-lg w-1/2" style={{ background: 'rgba(255,255,255,0.04)' }} />
+                <ul>
+                  {[0, 1, 2, 3].map((i) => (
+                    <li key={i} className="flex gap-3 border-b border-white/[0.07] px-5 py-4">
+                      <div className="h-9 w-9 shrink-0 animate-pulse rounded-full bg-white/[0.06]" />
+                      <div className="flex-1 space-y-2 pt-1">
+                        <div className="h-3 w-1/2 animate-pulse bg-white/[0.07]" />
+                        <div className="h-3 w-3/4 animate-pulse bg-white/[0.04]" />
                       </div>
-                    </div>
+                    </li>
                   ))}
-                </div>
+                </ul>
               ) : conversations.length === 0 && !activeChat ? (
-                <div className="flex flex-col items-center justify-center h-full text-center px-6 py-16">
-                  <MessageCircle size={32} className="mb-3" style={{ color: 'rgba(255,255,255,0.1)' }} />
-                  <p className="text-sm text-white/30">No conversations yet</p>
-                  <p className="text-xs text-white/20 mt-1">Start a chat from a job application</p>
+                <div className="px-5 py-16">
+                  <p className="serif text-3xl leading-tight">No messages yet.</p>
+                  <p className="mt-2 max-w-xs text-[14px] leading-relaxed text-white/45">
+                    Conversations start from a job — message someone who applied, or reply to a client from a job you applied to.
+                  </p>
                 </div>
               ) : (
-                conversations.map(conv => {
-                  const other = conv.sender?._id === session?.user?.id ? conv.receiver : conv.sender;
-                  if (!other) return null;
-                  const isActive = activeChat?.otherId === other._id;
-                  const unread = conv.unreadCount || 0;
-                  const hasUnread = unread > 0 && !isActive;
+                <ul>
+                  {conversations.map((conv) => {
+                    const other = conv.sender?._id === myId ? conv.receiver : conv.sender;
+                    if (!other) return null;
+                    const isActive = activeChat?.otherId === other._id;
+                    const unread = conv.unreadCount || 0;
+                    const hasUnread = unread > 0 && !isActive;
+                    const fromMe = conv.sender?._id === myId;
 
-                  return (
-                    <button key={conv._id} onClick={() => openConversation(conv)}
-                      className="w-full px-4 py-3.5 flex items-center gap-3 text-left border-b transition-all relative"
-                      style={{
-                        borderColor: 'rgba(255,255,255,0.05)',
-                        background: isActive ? 'rgba(74,222,128,0.08)' : hasUnread ? 'rgba(74,222,128,0.07)' : 'transparent',
-                        borderLeft: hasUnread ? '3px solid #16a34a' : '3px solid transparent',
-                      }}
-                      onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = hasUnread ? 'rgba(74,222,128,0.11)' : 'rgba(255,255,255,0.03)'; }}
-                      onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = hasUnread ? 'rgba(74,222,128,0.07)' : 'transparent'; }}
-                    >
-                      <div className="relative shrink-0">
-                        <div className="w-9 h-9 rounded-full bg-green-500 flex items-center justify-center text-white text-sm font-bold overflow-hidden">
-                          {other.avatar ? (
-                            <img src={other.avatar} alt={other.name} className="w-full h-full object-cover" />
-                          ) : (
-                            other.name?.charAt(0).toUpperCase()
-                          )}
-                        </div>
-                        <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 bg-green-400"
-                          style={{ borderColor: 'rgba(8,15,10,1)' }} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between mb-0.5">
-                          <p className="text-sm truncate"
-                            style={{ color: hasUnread ? '#4ade80' : 'rgba(255,255,255,0.85)', fontWeight: hasUnread ? '700' : '500' }}>
-                            {other.name}
-                          </p>
-                          <p className="text-[11px] shrink-0 ml-2"
-                            style={{ color: hasUnread ? 'rgba(74,222,128,0.6)' : 'rgba(255,255,255,0.2)' }}>
-                            {formatDistanceToNow(new Date(conv.createdAt), { addSuffix: false })}
-                          </p>
-                        </div>
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-xs truncate"
-                            style={{ color: hasUnread ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.3)', fontWeight: hasUnread ? '600' : '400' }}>
-                            {conv.content}
-                          </p>
-                          {hasUnread && (
-                            <span className="shrink-0 min-w-[18px] h-[18px] rounded-full flex items-center justify-center text-[10px] font-bold text-white px-1"
-                              style={{ background: '#16a34a', boxShadow: '0 0 0 2px rgba(8,15,10,0.8)' }}>
-                              {unread > 99 ? '99+' : unread}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })
+                    return (
+                      <li key={conv._id}>
+                        <button
+                          onClick={() => openConversation(conv)}
+                          className={`relative flex w-full items-center gap-3 border-b border-white/[0.07] px-5 py-4 text-left transition-colors ${
+                            isActive ? 'bg-white/[0.04]' : 'hover:bg-white/[0.02]'
+                          }`}
+                        >
+                          {isActive && <span className="absolute inset-y-0 left-0 w-0.5 bg-green-400" />}
+                          <Avatar name={other.name} src={other.avatar} />
+                          <div className="min-w-0 flex-1">
+                            <div className="mb-0.5 flex items-baseline justify-between gap-3">
+                              <p className={`truncate text-[14px] ${hasUnread ? 'font-semibold text-white' : 'font-medium text-white/85'}`}>
+                                {other.name}
+                              </p>
+                              <span className={`mono shrink-0 text-[11px] ${hasUnread ? 'text-green-400' : 'text-white/30'}`}>
+                                {shortAgo(conv.createdAt)}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3">
+                              <p className={`truncate text-[13px] ${hasUnread ? 'text-white/75' : 'text-white/40'}`}>
+                                {fromMe && <span className="text-white/30">You: </span>}
+                                {conv.content}
+                              </p>
+                              {hasUnread && (
+                                <span className="mono flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-green-400 px-1 text-[10px] text-[#080f0a]">
+                                  {unread > 99 ? '99+' : unread}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
               )}
             </div>
-          </div>
+          </aside>
 
-          {/* Chat window */}
-          <div
-            className={`lg:col-span-8 rounded-2xl flex flex-col overflow-hidden ${activeChat ? 'flex' : 'hidden lg:flex'}`}
-            style={glassPanel}
-          >
+          {/* ─── Thread ─── */}
+          <section className={`min-h-0 flex-col ${activeChat ? 'flex' : 'hidden md:flex'}`}>
             {activeChat ? (
               <>
-                {/* Chat header */}
-<div className="px-4 py-3.5 flex items-center gap-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
-  <button onClick={() => setActiveChat(null)}
-    className="lg:hidden p-1.5 rounded-lg transition"
-    style={{ color: 'rgba(255,255,255,0.4)' }}
-    onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.06)'}
-    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-    <ArrowLeft size={16} />
-  </button>
-
-  <button
-    onClick={() => router.push(`/profile/${activeChat.otherId}`)}
-    className="flex items-center gap-3 flex-1 text-left hover:opacity-80 transition group"
-  >
-    <div className="w-9 h-9 rounded-full bg-green-500 flex items-center justify-center text-white font-bold text-sm overflow-hidden shrink-0">
-      {activeChat.otherAvatar ? (
-        <img src={activeChat.otherAvatar} alt={activeChat.otherName} className="w-full h-full object-cover" />
-      ) : (
-        activeChat.otherName?.charAt(0).toUpperCase()
-      )}
-    </div>
-    <div>
-      <p className="text-sm font-semibold text-white group-hover:text-green-400 transition-colors">
-        {activeChat.otherName}
-      </p>
-      <div className="flex items-center gap-1.5">
-        <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
-        <p className="text-xs text-green-400">Tap to view profile</p>
-      </div>
-    </div>
-  </button>
-</div>
+                {/* Thread header */}
+                <div className="flex items-center gap-2 border-b border-white/10 px-3 py-3 md:px-5">
+                  <button onClick={() => setActiveChat(null)} aria-label="Back to conversations"
+                    className="flex h-9 w-9 items-center justify-center rounded-full text-white/50 transition hover:bg-white/[0.05] hover:text-white md:hidden">
+                    <ArrowLeft size={18} />
+                  </button>
+                  <button onClick={() => router.push(`/profile/${activeChat.otherId}`)}
+                    className="group flex flex-1 items-center gap-3 text-left">
+                    <Avatar name={activeChat.otherName} src={activeChat.otherAvatar} size={34} />
+                    <div className="min-w-0">
+                      <p className="truncate text-[15px] font-medium text-white transition-colors group-hover:text-green-400">
+                        {activeChat.otherName}
+                      </p>
+                      <p className="mono text-[10px] uppercase tracking-[0.14em] text-white/35">View profile</p>
+                    </div>
+                  </button>
+                </div>
 
                 {/* Messages */}
-                <div
-                  ref={messagesContainerRef}
-                  onScroll={handleMessagesScroll}
-                  className="flex-1 overflow-y-auto px-4 py-4 space-y-3"
-                >
+                <div ref={messagesContainerRef} onScroll={handleMessagesScroll}
+                  className="min-h-0 flex-1 overflow-y-auto px-4 py-6 md:px-6">
                   {messages.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-center">
-                      <div className="w-12 h-12 rounded-2xl flex items-center justify-center mb-3"
-                        style={{ background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.15)' }}>
-                        <MessageCircle size={20} className="text-green-400" />
-                      </div>
-                      <p className="text-white/40 text-sm">Say hello to {activeChat.otherName}!</p>
+                    <div className="flex h-full flex-col items-center justify-center text-center">
+                      <Avatar name={activeChat.otherName} src={activeChat.otherAvatar} size={56} />
+                      <p className="serif mt-5 text-3xl">Say hello to {activeChat.otherName?.split(' ')[0]}.</p>
+                      <p className="mt-2 max-w-xs text-[13px] leading-relaxed text-white/40">
+                        Be specific about the job — what, where in town, and when you need it done.
+                      </p>
                     </div>
                   ) : (
-                    messages.map(msg => {
-                      const isMe = msg.sender?._id === session?.user?.id || msg.sender === session?.user?.id;
+                    messages.map((msg, i) => {
+                      const isMe = msg.sender?._id === myId || msg.sender === myId;
+                      const prev = messages[i - 1];
+                      const next = messages[i + 1];
+                      const prevIsMe = prev && (prev.sender?._id === myId || prev.sender === myId);
+                      const nextIsMe = next && (next.sender?._id === myId || next.sender === myId);
+                      const newDay = !prev || new Date(prev.createdAt).toDateString() !== new Date(msg.createdAt).toDateString();
+                      const groupedWithPrev = !newDay && prev && prevIsMe === isMe;
+                      const groupedWithNext = next && nextIsMe === isMe &&
+                        new Date(next.createdAt).toDateString() === new Date(msg.createdAt).toDateString();
                       const isSelected = replyTo?._id === msg._id;
+                      const isHighlighted = highlightedId === msg._id;
+
                       return (
-                        <div key={msg._id}
-                          id={`msg-${msg._id}`}
-                          className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}
-                          onMouseDown={() => handleLongPressStart(msg)}
-                          onMouseUp={handleLongPressEnd}
-                          onMouseLeave={handleLongPressEnd}
-                          onTouchStart={() => handleLongPressStart(msg)}
-                          onTouchEnd={handleLongPressEnd}
-                          onTouchCancel={handleLongPressEnd}
-                        >
+                        <div key={msg._id}>
+                          {newDay && (
+                            <div className="my-6 flex items-center gap-4 first:mt-0">
+                              <span className="h-px flex-1 bg-white/[0.07]" />
+                              <span className="mono text-[10px] uppercase tracking-[0.16em] text-white/30">{dayLabel(msg.createdAt)}</span>
+                              <span className="h-px flex-1 bg-white/[0.07]" />
+                            </div>
+                          )}
+
                           <div
-                            className="max-w-[70%] rounded-2xl text-sm overflow-hidden transition-all duration-150 select-none"
-                            style={{
-                              opacity: msg._optimistic ? 0.7 : 1,
-                              ...(isMe ? {
-                                background: 'linear-gradient(135deg, #16a34a, #15803d)',
-                                borderBottomRightRadius: '4px',
-                                boxShadow: isSelected
-                                  ? '0 0 0 2px #4ade80, 0 2px 12px rgba(22,163,74,0.25)'
-                                  : highlightedId === msg._id
-                                  ? '0 0 0 2px #fbbf24, 0 2px 12px rgba(22,163,74,0.25)'
-                                  : '0 2px 12px rgba(22,163,74,0.25)',
-                              } : {
-                                background: highlightedId === msg._id ? 'rgba(251,191,36,0.15)' : 'rgba(255,255,255,0.07)',
-                                border: isSelected
-                                  ? '1px solid rgba(74,222,128,0.6)'
-                                  : highlightedId === msg._id
-                                  ? '1px solid rgba(251,191,36,0.6)'
-                                  : '1px solid rgba(255,255,255,0.08)',
-                                borderBottomLeftRadius: '4px',
-                              }),
-                              transform: isSelected ? 'scale(0.97)' : 'scale(1)',
-                            }}
+                            id={`msg-${msg._id}`}
+                            className={`group flex items-end gap-2 ${isMe ? 'flex-row-reverse' : ''} ${groupedWithPrev ? 'mt-1' : 'mt-4'}`}
+                            onTouchStart={() => handleLongPressStart(msg)}
+                            onTouchEnd={handleLongPressEnd}
+                            onTouchMove={handleLongPressEnd}
+                            onTouchCancel={handleLongPressEnd}
                           >
-                            {/* Quoted reply inside bubble — tap to jump to original */}
-                            {msg.replyTo && (
-                              <div
-                                onClick={(e) => { e.stopPropagation(); jumpToMessage(msg.replyTo._id); }}
-                                className="px-3 pt-2.5 pb-1.5 mx-2 mt-2 rounded-xl cursor-pointer transition hover:brightness-125"
-                                style={{ background: 'rgba(0,0,0,0.2)', borderLeft: '2px solid rgba(74,222,128,0.7)' }}>
-                                <p className="text-[11px] font-semibold text-green-400 mb-0.5">{msg.replyTo.senderName}</p>
-                                <p className="text-[11px] text-white/50 truncate">{msg.replyTo.content}</p>
-                              </div>
-                            )}
-                            <div className="px-4 py-2.5">
-                              <p className="text-white leading-relaxed">{msg.content}</p>
-                              <p className="text-[11px] mt-1" style={{ color: isMe ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.25)' }}>
-                                {msg._optimistic ? 'Sending...' : formatDistanceToNow(new Date(msg.createdAt), { addSuffix: true })}
-                              </p>
+                            <div
+                              className={`max-w-[78%] select-none overflow-hidden text-[14.5px] leading-relaxed transition-transform md:max-w-[65%] md:select-text ${
+                                isMe ? 'bg-green-400 text-[#080f0a]' : 'border border-white/10 bg-[#0f1c13] text-white/90'
+                              } ${isHighlighted ? 'flash' : ''} ${isSelected ? 'scale-[0.98] ring-2 ring-green-400/70 ring-offset-2 ring-offset-[#080f0a]' : ''}`}
+                              style={{
+                                opacity: msg._optimistic ? 0.65 : 1,
+                                borderRadius: 18,
+                                ...(isMe
+                                  ? { borderBottomRightRadius: groupedWithNext ? 18 : 4 }
+                                  : { borderBottomLeftRadius: groupedWithNext ? 18 : 4 }),
+                              }}
+                            >
+                              {msg.replyTo && (
+                                <button type="button"
+                                  onClick={(e) => { e.stopPropagation(); jumpToMessage(msg.replyTo._id); }}
+                                  className={`mx-1.5 mt-1.5 block w-[calc(100%-0.75rem)] rounded-xl border-l-2 px-3 py-2 text-left transition ${
+                                    isMe ? 'border-[#080f0a]/50 bg-[#080f0a]/10 hover:bg-[#080f0a]/15' : 'border-green-400 bg-white/[0.04] hover:bg-white/[0.07]'
+                                  }`}>
+                                  <p className={`text-[11px] font-semibold ${isMe ? 'text-[#080f0a]/80' : 'text-green-400'}`}>
+                                    {msg.replyTo.senderName}
+                                  </p>
+                                  <p className={`truncate text-[12px] ${isMe ? 'text-[#080f0a]/60' : 'text-white/45'}`}>
+                                    {msg.replyTo.content}
+                                  </p>
+                                </button>
+                              )}
+                              <p className="whitespace-pre-wrap break-words px-3.5 py-2">{msg.content}</p>
+                            </div>
+
+                            {/* Desktop reply button + time */}
+                            <div className={`mb-1 flex shrink-0 items-center gap-2 ${isMe ? 'flex-row-reverse' : ''}`}>
+                              <button type="button" onClick={() => startReply(msg)} aria-label="Reply"
+                                className="hidden h-7 w-7 items-center justify-center rounded-full text-white/30 opacity-0 transition hover:bg-white/[0.06] hover:text-white group-hover:opacity-100 md:flex">
+                                <CornerUpLeft size={14} />
+                              </button>
+                              {!groupedWithNext && (
+                                <span className="mono text-[10px] text-white/30">
+                                  {msg._optimistic ? 'sending' : clock(msg.createdAt)}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -486,64 +468,47 @@ function ChatContent() {
                   <div ref={messagesEndRef} />
                 </div>
 
-                {/* Input area */}
-                <div className="border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
-                  {/* Reply preview bar */}
+                {/* Composer */}
+                <div className="border-t border-white/10">
                   {replyTo && (
-                    <div className="px-4 pt-3 flex items-center gap-3">
-                      <div className="flex-1 px-3 py-2 rounded-xl"
-                        style={{ background: 'rgba(74,222,128,0.08)', borderLeft: '2px solid #4ade80' }}>
-                        <p className="text-[11px] font-semibold text-green-400 mb-0.5">
-                          Replying to {replyTo.sender?.name || (replyTo.sender?._id === session?.user?.id ? 'yourself' : activeChat.otherName)}
+                    <div className="flex items-center gap-3 px-4 pt-3 md:px-6">
+                      <div className="min-w-0 flex-1 border-l-2 border-green-400 pl-3">
+                        <p className="text-[11px] font-semibold text-green-400">
+                          Replying to {senderNameOf(replyTo) === 'You' ? 'yourself' : senderNameOf(replyTo)}
                         </p>
-                        <p className="text-[11px] text-white/40 truncate">{replyTo.content}</p>
+                        <p className="truncate text-[12px] text-white/45">{replyTo.content}</p>
                       </div>
-                      <button onClick={cancelReply}
-                        className="w-6 h-6 rounded-full flex items-center justify-center text-white/30 hover:text-white/70 transition shrink-0 text-xs"
-                        style={{ background: 'rgba(255,255,255,0.06)' }}>
-                        ✕
+                      <button onClick={() => setReplyTo(null)} aria-label="Cancel reply"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white/40 transition hover:bg-white/[0.06] hover:text-white">
+                        <X size={14} />
                       </button>
                     </div>
                   )}
-                  <form onSubmit={sendMessage} className="px-4 py-3.5 flex gap-3">
+                  <form onSubmit={sendMessage} className="flex items-center gap-3 px-4 py-3 md:px-6 md:py-4">
                     <input
                       ref={inputRef}
                       type="text"
                       value={newMessage}
-                      onChange={e => setNewMessage(e.target.value)}
-                      placeholder={replyTo ? `Reply to ${replyTo.sender?.name || 'message'}...` : `Message ${activeChat.otherName}...`}
-                      className="flex-1 px-4 py-3 rounded-xl text-sm text-white placeholder-white/20 outline-none transition"
-                      style={{
-                        background: 'rgba(255,255,255,0.06)',
-                        border: '1px solid rgba(255,255,255,0.08)',
-                      }}
-                      onFocus={e => e.target.style.borderColor = 'rgba(74,222,128,0.4)'}
-                      onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.08)'}
+                      onChange={(e) => setNewMessage(e.target.value)}
+                      placeholder={`Message ${activeChat.otherName?.split(' ')[0] || ''}`}
+                      className="min-w-0 flex-1 rounded-full border border-white/10 bg-white/[0.03] px-5 py-3 text-[14.5px] text-white outline-none transition placeholder:text-white/25 focus:border-green-400/60"
                     />
-                    <button type="submit" disabled={!newMessage.trim()}
-                      className="w-11 h-11 rounded-xl flex items-center justify-center text-white transition-all active:scale-95 disabled:opacity-40 shrink-0"
-                      style={{
-                        background: newMessage.trim() ? 'linear-gradient(135deg,#16a34a,#15803d)' : 'rgba(255,255,255,0.06)',
-                        boxShadow: newMessage.trim() ? '0 4px 16px rgba(22,163,74,0.3)' : 'none',
-                      }}>
-                      <Send size={16} />
+                    <button type="submit" disabled={!newMessage.trim()} aria-label="Send"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-green-400 text-[#080f0a] transition hover:bg-green-300 active:scale-95 disabled:bg-white/[0.06] disabled:text-white/25">
+                      <ArrowUp size={18} strokeWidth={2.2} />
                     </button>
                   </form>
                 </div>
               </>
             ) : (
-              <div className="flex flex-col items-center justify-center h-full text-center px-8">
-                <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4"
-                  style={{ background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.15)' }}>
-                  <MessageCircle size={28} className="text-green-400" />
-                </div>
-                <h3 className="font-semibold text-white mb-2">Your Messages</h3>
-                <p className="text-white/30 text-sm max-w-xs">
-                  Select a conversation or start a new chat from a job application.
+              <div className="flex h-full flex-col justify-center px-10">
+                <p className="serif text-4xl leading-tight text-white/90">Pick a conversation.</p>
+                <p className="mt-2 max-w-sm text-[14px] leading-relaxed text-white/40">
+                  Choose someone on the left to pick up where you left off.
                 </p>
               </div>
             )}
-          </div>
+          </section>
         </div>
       </div>
     </div>
@@ -553,8 +518,10 @@ function ChatContent() {
 export default function ChatPage() {
   return (
     <Suspense fallback={
-      <div className="flex items-center justify-center min-h-screen bg-[#080f0a]">
-        <div className="w-10 h-10 rounded-full border-2 border-green-500/20 border-t-green-500 animate-spin" />
+      <div className="flex min-h-screen items-center justify-center bg-[#080f0a]">
+        <p className="text-[11px] uppercase tracking-[0.18em] text-white/35" style={{ fontFamily: 'var(--font-mono), monospace' }}>
+          Loading…
+        </p>
       </div>
     }>
       <ChatContent />
