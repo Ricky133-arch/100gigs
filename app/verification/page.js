@@ -1,69 +1,73 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { toast } from 'sonner';
-import {
-  Upload, Loader2, ShieldCheck, Clock, XCircle,
-  AlertCircle, Building2, CheckCircle, CreditCard,
-} from 'lucide-react';
+import { Loader2, Check, Plus, ArrowRight, Lock } from 'lucide-react';
 
-const glassCard = {
-  background:          'rgba(255,255,255,0.04)',
-  border:              '1px solid rgba(255,255,255,0.08)',
-  backdropFilter:      'blur(12px)',
-  WebkitBackdropFilter:'blur(12px)',
-};
-
-const inputStyle = {
-  background: 'rgba(255,255,255,0.06)',
-  border:     '1px solid rgba(255,255,255,0.1)',
-  color:      'white',
-};
-
-const onFocus = e => e.target.style.borderColor = 'rgba(74,222,128,0.5)';
-const onBlur  = e => e.target.style.borderColor = 'rgba(255,255,255,0.1)';
+const MAX_MB = 10;
+const maskAccount = (n) => (n ? `•••• ${String(n).slice(-4)}` : '');
 
 export default function VerificationPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
 
-  const [verification,   setVerification]   = useState(null);
-  const [loadingStatus,  setLoadingStatus]  = useState(true);
-  const [file,           setFile]           = useState(null);
-  const [preview,        setPreview]        = useState(null);
-  const [submitting,     setSubmitting]     = useState(false);
+  const [verification, setVerification] = useState(null);
+  const [loadingStatus, setLoadingStatus] = useState(true);
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
   // Bank details
-  const [banks,          setBanks]          = useState([]);
-  const [loadingBanks,   setLoadingBanks]   = useState(false);
-  const [bankCode,       setBankCode]       = useState('');
-  const [bankName,       setBankName]       = useState('');
-  const [accountNumber,  setAccountNumber]  = useState('');
-  const [accountName,    setAccountName]    = useState('');
-  const [resolvingBank,  setResolvingBank]  = useState(false);
-  const [bankVerified,   setBankVerified]   = useState(false);
-  const [savingBank,     setSavingBank]     = useState(false);
-  const [existingBank,   setExistingBank]   = useState(null);
+  const [banks, setBanks] = useState([]);
+  const [banksFailed, setBanksFailed] = useState(false);
+  const [loadingBanks, setLoadingBanks] = useState(false);
+  const [bankQuery, setBankQuery] = useState('');
+  const [bankCode, setBankCode] = useState('');
+  const [accountNumber, setAccountNumber] = useState('');
+  const [accountName, setAccountName] = useState('');
+  const [resolveError, setResolveError] = useState('');
+  const [resolvingBank, setResolvingBank] = useState(false);
+  const [savingBank, setSavingBank] = useState(false);
+  const [existingBank, setExistingBank] = useState(null);
+  const [editingBank, setEditingBank] = useState(false);
+  const resolveId = useRef(0);
 
   useEffect(() => {
-    if (status === 'unauthenticated') router.push('/login');
-  }, [status]);
+    if (status === 'unauthenticated') router.push('/login?callbackUrl=%2Fverification');
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!session) return;
     fetchStatus();
     fetchBanks();
-  }, [session]);
+  }, [session?.user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-resolve account name when account number is 10 digits and bank is selected
+  // Free the preview image when it changes or the page closes
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
+
+  // Auto-check the account name once there are 10 digits and a bank.
+  // Ignores slow answers for an older number/bank so the name always matches what's on screen.
   useEffect(() => {
-    if (accountNumber.length === 10 && bankCode) {
-      resolveAccount();
-    } else {
-      setAccountName('');
-      setBankVerified(false);
-    }
+    setAccountName('');
+    setResolveError('');
+    if (accountNumber.length !== 10 || !bankCode) { setResolvingBank(false); return; }
+    const myId = ++resolveId.current;
+    setResolvingBank(true);
+    (async () => {
+      try {
+        const res = await fetch(`/api/bank/resolve?accountNumber=${encodeURIComponent(accountNumber)}&bankCode=${encodeURIComponent(bankCode)}`);
+        const data = await res.json().catch(() => ({}));
+        if (myId !== resolveId.current) return;
+        if (res.ok && data.accountName) setAccountName(data.accountName);
+        else setResolveError(data.error || 'We couldn’t find that account. Check the number and bank.');
+      } catch {
+        if (myId === resolveId.current) setResolveError('Couldn’t check the account. Check your connection.');
+      } finally {
+        if (myId === resolveId.current) setResolvingBank(false);
+      }
+    })();
   }, [accountNumber, bankCode]);
 
   const fetchStatus = async () => {
@@ -72,10 +76,7 @@ export default function VerificationPage() {
       if (res.ok) {
         const data = await res.json();
         setVerification(data);
-        // Pre-fill existing bank details if any
-        if (data.bankDetails?.accountNumber) {
-          setExistingBank(data.bankDetails);
-        }
+        if (data.bankDetails?.accountNumber) setExistingBank(data.bankDetails);
       }
     } catch (e) {
       console.error(e);
@@ -86,389 +87,342 @@ export default function VerificationPage() {
 
   const fetchBanks = async () => {
     setLoadingBanks(true);
+    setBanksFailed(false);
     try {
-      const res  = await fetch('/api/bank/list');
-      const data = await res.json();
-      if (res.ok) setBanks(data.banks || []);
+      const res = await fetch('/api/bank/list');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error('banks');
+      // Paystack lists some banks more than once — keep one per code
+      const seen = new Set();
+      setBanks((data.banks || []).filter((b) => b.code && !seen.has(b.code) && seen.add(b.code)));
     } catch (e) {
       console.error(e);
+      setBanksFailed(true);
     } finally {
       setLoadingBanks(false);
     }
   };
 
-  const resolveAccount = async () => {
-    setResolvingBank(true);
-    setAccountName('');
-    setBankVerified(false);
-    try {
-      const res  = await fetch(`/api/bank/resolve?accountNumber=${accountNumber}&bankCode=${bankCode}`);
-      const data = await res.json();
-      if (res.ok) {
-        setAccountName(data.accountName);
-        setBankVerified(true);
-      } else {
-        toast.error(data.error || 'Could not verify account');
-      }
-    } catch {
-      toast.error('Failed to verify account');
-    } finally {
-      setResolvingBank(false);
-    }
-  };
+  const filteredBanks = useMemo(() => {
+    const q = bankQuery.trim().toLowerCase();
+    return q ? banks.filter((b) => b.name.toLowerCase().includes(q)) : banks;
+  }, [banks, bankQuery]);
+  const selectedBank = banks.find((b) => b.code === bankCode);
+  const bankVerified = !!accountName && !resolvingBank;
 
-  const handleBankChange = (e) => {
-    const selected = banks.find(b => b.code === e.target.value);
-    setBankCode(e.target.value);
-    setBankName(selected?.name || '');
-    setAccountName('');
-    setBankVerified(false);
+  const resetBankForm = () => {
+    setBankCode(''); setBankQuery(''); setAccountNumber(''); setAccountName(''); setResolveError('');
   };
 
   const handleSaveBankDetails = async () => {
-    if (!bankVerified || !accountName) {
-      toast.error('Please verify your account number first');
-      return;
-    }
+    if (!bankVerified) { toast.error('Check your account number first'); return; }
     setSavingBank(true);
     try {
+      // NOTE: the server must re-check this account with Paystack itself — see notes.
+      const details = { bankName: selectedBank?.name || '', bankCode, accountNumber, accountName };
       const res = await fetch('/api/users/profile', {
-        method:  'PATCH',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          bankDetails: {
-            bankName,
-            bankCode,
-            accountNumber,
-            accountName,
-            verified: true,
-          },
-        }),
+        body: JSON.stringify({ bankDetails: details }),
       });
-      if (res.ok) {
-        toast.success('Bank details saved!');
-        setExistingBank({ bankName, bankCode, accountNumber, accountName, verified: true });
-        setBankCode('');
-        setBankName('');
-        setAccountNumber('');
-        setAccountName('');
-        setBankVerified(false);
-      } else {
-        toast.error('Failed to save bank details');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || 'Couldn’t save your bank details');
+        return;
       }
+      toast.success('Payout account saved');
+      setExistingBank({ ...details, verified: true });
+      setEditingBank(false);
+      resetBankForm();
     } catch {
-      toast.error('Something went wrong');
+      toast.error('Something went wrong. Please try again.');
     } finally {
       setSavingBank(false);
     }
   };
 
   const handleFileChange = (e) => {
-    const f = e.target.files[0];
+    const f = e.target.files?.[0];
+    e.target.value = '';
     if (!f) return;
-    if (f.size > 10 * 1024 * 1024) { toast.error('File is too large (max 10MB)'); return; }
+    if (!f.type.startsWith('image/')) { toast.error('Upload a photo of your ID (JPG or PNG)'); return; }
+    if (f.size > MAX_MB * 1024 * 1024) { toast.error(`That photo is over ${MAX_MB}MB`); return; }
     setFile(f);
-    const reader = new FileReader();
-    reader.onloadend = () => setPreview(reader.result);
-    reader.readAsDataURL(f);
+    setPreview(URL.createObjectURL(f));
   };
+
+  const clearFile = () => { setFile(null); setPreview(null); };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!file) return toast.error('Please select your ID document');
+    if (!file) { toast.error('Add a photo of your ID first'); return; }
     setSubmitting(true);
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const uploadRes = await fetch('/api/upload', { method: 'POST', body: formData });
-      if (!uploadRes.ok) throw new Error('Upload failed');
+      const fd = new FormData();
+      fd.append('file', file);
+      const uploadRes = await fetch('/api/upload', { method: 'POST', body: fd });
+      if (!uploadRes.ok) throw new Error('upload');
       const uploadData = await uploadRes.json();
 
       const res = await fetch('/api/verification/upload', {
-        method:  'POST',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ docUrl: uploadData.url }),
+        body: JSON.stringify({ docUrl: uploadData.url }),
       });
-      const data = await res.json();
-      if (!res.ok) { toast.error(data.error || 'Failed to submit verification'); return; }
-      toast.success('Document submitted for review!');
-      setFile(null);
-      setPreview(null);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(data.error || 'Couldn’t submit your ID'); return; }
+      toast.success('ID submitted for review');
+      clearFile();
       fetchStatus();
     } catch {
-      toast.error('Something went wrong. Please try again.');
+      toast.error('Couldn’t upload your ID. Please try again.');
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (status === 'loading' || loadingStatus) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-[#080f0a]">
-        <div className="w-10 h-10 rounded-full border-2 border-green-500/20 border-t-green-500 animate-spin" />
+  /* ── render ───────────────────────────────────────────── */
+
+  const shell = (children) => (
+    <div className="vf min-h-screen bg-[#080f0a] text-[#e9efe9] antialiased">
+      <style>{`
+        .vf { font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif; }
+        .serif { font-family: var(--font-serif), Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+        .mono { font-family: var(--font-mono), ui-monospace, monospace; }
+        .vf select option { background: #0b150e; color: #fff; }
+      `}</style>
+      {children}
+    </div>
+  );
+
+  if (status === 'loading' || (session && loadingStatus)) {
+    return shell(
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="mono text-[11px] uppercase tracking-[0.18em] text-white/35">Loading…</p>
       </div>
     );
   }
-
   if (!session) return null;
 
   if (session.user.role !== 'provider') {
-    return (
-      <div className="min-h-screen bg-[#080f0a] flex items-center justify-center px-4">
-        <div className="text-center p-10 rounded-3xl max-w-md w-full" style={glassCard}>
-          <ShieldCheck size={36} className="mx-auto mb-4" style={{ color: 'rgba(255,255,255,0.2)' }} />
-          <h2 className="text-xl font-bold text-white mb-2">Providers Only</h2>
-          <p className="text-white/40 text-sm">Only service providers can submit verification documents.</p>
-        </div>
+    return shell(
+      <div className="mx-auto flex min-h-screen max-w-5xl flex-col justify-center px-5 md:px-8">
+        <p className="serif max-w-xl text-5xl leading-[0.95]">Verification is for service providers.</p>
+        <p className="mt-6 max-w-md text-[15px] leading-relaxed text-white/55">
+          Providers verify their ID so clients know who they’re hiring. As a client, there’s nothing you need to do here.
+        </p>
+        <Link href="/dashboard"
+          className="mt-10 inline-flex w-max items-center gap-2 rounded-full bg-green-400 px-7 py-3.5 text-[14px] font-medium text-[#080f0a] transition hover:bg-green-300">
+          Back to dashboard <ArrowRight size={16} />
+        </Link>
       </div>
     );
   }
 
-  const renderStatusBanner = () => {
-    const s = verification?.verificationStatus;
-    if (s === 'verified') return (
-      <div className="flex items-center gap-3 p-5 rounded-2xl mb-6"
-        style={{ background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.2)' }}>
-        <ShieldCheck size={22} className="text-green-400 shrink-0" />
-        <div>
-          <p className="text-sm font-semibold text-green-400">You're verified!</p>
-          <p className="text-xs text-white/40 mt-0.5">Your profile now shows a verification badge to clients.</p>
-        </div>
-      </div>
-    );
-    if (s === 'pending') return (
-      <div className="flex items-center gap-3 p-5 rounded-2xl mb-6"
-        style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)' }}>
-        <Clock size={22} className="text-yellow-400 shrink-0" />
-        <div>
-          <p className="text-sm font-semibold text-yellow-400">Verification pending</p>
-          <p className="text-xs text-white/40 mt-0.5">An admin is reviewing your document. This usually takes 1-2 business days.</p>
-        </div>
-      </div>
-    );
-    if (s === 'rejected') return (
-      <div className="flex items-center gap-3 p-5 rounded-2xl mb-6"
-        style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
-        <XCircle size={22} className="text-red-400 shrink-0" />
-        <div>
-          <p className="text-sm font-semibold text-red-400">Verification rejected</p>
-          <p className="text-xs text-white/40 mt-0.5">
-            {verification?.verificationRejectionReason || 'Please re-submit a clearer document.'}
-          </p>
-        </div>
-      </div>
-    );
-    return null;
-  };
+  const vStatus = verification?.verificationStatus || 'unsubmitted';
+  const canSubmit = ['unsubmitted', 'rejected'].includes(vStatus);
+  const hasBank = !!existingBank?.accountNumber && !editingBank;
 
-  const canSubmit = !verification || ['unsubmitted', 'rejected'].includes(verification.verificationStatus);
+  const STATUS = {
+    verified: { tag: 'Verified', tone: 'text-green-400', rule: 'border-green-400', title: 'You’re verified.', body: 'Your profile shows the verified badge. Clients can see you’ve been checked.' },
+    pending: { tag: 'Under review', tone: 'text-amber-300', rule: 'border-amber-300', title: 'We’re checking your ID.', body: 'An admin is reviewing it. This usually takes 1–2 business days. You’ll get a notification.' },
+    rejected: { tag: 'Needs attention', tone: 'text-red-400', rule: 'border-red-400', title: 'Your ID wasn’t accepted.', body: verification?.verificationRejectionReason || 'Please upload a clearer photo where every detail can be read.' },
+  }[vStatus];
 
-  return (
-    <div className="min-h-screen bg-[#080f0a] relative overflow-x-hidden">
-      {/* ── Fix: dark styling for native <select> dropdown options ──────── */}
-      <style>{`select option { background: #111; color: white; }`}</style>
+  const label = 'mono mb-3 block text-[10px] uppercase tracking-[0.16em] text-white/35';
+  const input = 'w-full border-b border-white/15 bg-transparent pb-3 text-[16px] text-white outline-none transition-colors placeholder:text-white/20 focus:border-green-400';
 
-      <div className="relative max-w-xl mx-auto px-4 py-12 space-y-5">
+  return shell(
+    <div className="mx-auto max-w-5xl px-5 pb-20 pt-10 md:px-8 md:pt-16">
+      <header className="mb-12 max-w-2xl">
+        <h1 className="serif text-5xl leading-[0.95] md:text-7xl">
+          Get <em className="text-green-400">verified.</em>
+        </h1>
+        <p className="mt-6 text-[15px] leading-relaxed text-white/55">
+          Two things: a photo of your ID so clients know who they’re hiring, and the account you want to be paid into.
+        </p>
+      </header>
 
-        {/* Header */}
-        <div className="mb-8">
-          <p className="text-xs font-semibold uppercase tracking-widest text-green-400/60 mb-2">Provider Verification</p>
-          <h1 className="text-3xl font-bold text-white mb-1">Get Verified</h1>
-          <p className="text-white/35 text-sm">Upload a valid ID and add your bank details to receive payments.</p>
-        </div>
+      {/* Progress */}
+      <ol className="mb-16 grid grid-cols-2 border-y border-white/10">
+        {[
+          ['ID check', vStatus === 'verified' ? 'Done' : vStatus === 'pending' ? 'In review' : vStatus === 'rejected' ? 'Try again' : 'To do', vStatus === 'verified'],
+          ['Payout account', existingBank?.accountNumber ? 'Done' : 'To do', !!existingBank?.accountNumber],
+        ].map(([t, s, ok], i) => (
+          <li key={t} className={`flex items-center gap-3 py-5 ${i ? 'border-l border-white/10 pl-5 md:pl-8' : ''}`}>
+            <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${ok ? 'border-green-400 bg-green-400' : 'border-white/25'}`}>
+              {ok && <Check size={11} strokeWidth={3} className="text-[#080f0a]" />}
+            </span>
+            <span>
+              <span className="block text-[14px] text-white">{t}</span>
+              <span className={`mono block text-[11px] ${ok ? 'text-green-400' : 'text-white/40'}`}>{s}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
 
-        {renderStatusBanner()}
+      <div className="space-y-20">
 
-        {/* ── Bank Account Details ─────────────────────────────────────── */}
-        <div className="p-6 rounded-2xl space-y-4" style={glassCard}>
-          <div className="flex items-center gap-2.5 mb-1">
-            <div className="w-7 h-7 rounded-lg flex items-center justify-center"
-              style={{ background: 'rgba(74,222,128,0.12)' }}>
-              <CreditCard size={14} className="text-green-400" />
-            </div>
-            <p className="text-sm font-semibold text-white">Payment Details</p>
+        {/* ─── 01 ID ─── */}
+        <section className="grid gap-8 md:grid-cols-[260px_1fr] md:gap-14">
+          <div>
+            <p className="mono mb-3 text-[11px] text-green-400">01</p>
+            <h2 className="text-xl font-medium text-white">Your ID</h2>
+            <p className="mt-2 text-[14px] leading-relaxed text-white/45">
+              National ID (NIN slip or card), driver’s licence, voter’s card or international passport.
+            </p>
           </div>
-          <p className="text-xs text-white/30 leading-relaxed">
-            Add your bank account so clients can pay you through 100Gigs after a completed job.
-            100Gigs charges a <strong className="text-white/60">10% platform fee</strong> on payments made through the platform.
-          </p>
 
-          {/* Existing bank details */}
-          {existingBank?.accountNumber && (
-            <div className="p-4 rounded-xl"
-              style={{ background: 'rgba(74,222,128,0.06)', border: '1px solid rgba(74,222,128,0.15)' }}>
-              <div className="flex items-center gap-2 mb-2">
-                <CheckCircle size={14} className="text-green-400" />
-                <p className="text-xs font-semibold text-green-400">Bank account saved</p>
+          <div>
+            {STATUS && (
+              <div className={`mb-8 border-l-2 ${STATUS.rule} pl-5`}>
+                <p className={`mono mb-2 text-[10px] uppercase tracking-[0.16em] ${STATUS.tone}`}>{STATUS.tag}</p>
+                <p className="serif text-2xl leading-tight">{STATUS.title}</p>
+                <p className="mt-2 text-[14px] leading-relaxed text-white/55">{STATUS.body}</p>
               </div>
-              <p className="text-sm font-semibold text-white">{existingBank.accountName}</p>
-              <p className="text-xs text-white/40 mt-0.5">{existingBank.bankName} · {existingBank.accountNumber}</p>
-              <button
-                onClick={() => setExistingBank(null)}
-                className="text-xs text-white/30 hover:text-white/60 transition mt-2"
-              >
-                Update bank details
-              </button>
-            </div>
-          )}
+            )}
 
-          {/* Bank form — show if no existing bank or updating */}
-          {!existingBank?.accountNumber && (
-            <div className="space-y-3">
-              {/* Bank selector */}
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-widest text-white/40 mb-2">
-                  Bank Name
-                </label>
-                <select
-                  value={bankCode}
-                  onChange={handleBankChange}
-                  className="w-full px-4 py-3.5 rounded-xl text-sm outline-none transition"
-                  style={{ ...inputStyle, cursor: 'pointer' }}
-                  onFocus={onFocus}
-                  onBlur={onBlur}
-                >
-                  <option value="">
-                    {loadingBanks ? 'Loading banks...' : 'Select your bank'}
-                  </option>
-                  {banks.map((bank, index) => (
-  <option key={`${bank.code}-${index}`} value={bank.code}>{bank.name}</option>
-))}
-                </select>
-              </div>
-
-              {/* Account number */}
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-widest text-white/40 mb-2">
-                  Account Number
-                </label>
-                <input
-                  type="text"
-                  value={accountNumber}
-                  onChange={e => setAccountNumber(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                  placeholder="10-digit account number"
-                  className="w-full px-4 py-3.5 rounded-xl text-sm outline-none transition placeholder-white/20"
-                  style={inputStyle}
-                  onFocus={onFocus}
-                  onBlur={onBlur}
-                />
-              </div>
-
-              {/* Account name — auto filled */}
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-widest text-white/40 mb-2">
-                  Account Name
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={resolvingBank ? 'Verifying...' : accountName}
-                    readOnly
-                    placeholder="Auto-filled after account verification"
-                    className="w-full px-4 py-3.5 rounded-xl text-sm outline-none placeholder-white/20"
-                    style={{
-                      ...inputStyle,
-                      color: bankVerified ? '#4ade80' : 'rgba(255,255,255,0.4)',
-                      cursor: 'default',
-                    }}
-                  />
-                  {resolvingBank && (
-                    <Loader2 size={16} className="absolute right-4 top-1/2 -translate-y-1/2 animate-spin text-white/30" />
-                  )}
-                  {bankVerified && (
-                    <CheckCircle size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-green-400" />
-                  )}
-                </div>
-                {bankVerified && (
-                  <p className="text-xs text-green-400 mt-1">✓ Account verified by Paystack</p>
+            {canSubmit && (
+              <form onSubmit={handleSubmit}>
+                {preview ? (
+                  <div>
+                    <div className="border border-white/10 bg-white/[0.02] p-3">
+                      <img src={preview} alt="Your ID" className="mx-auto max-h-72 w-auto object-contain" />
+                    </div>
+                    <button type="button" onClick={clearFile} disabled={submitting}
+                      className="mt-3 border-b border-white/20 pb-0.5 text-[13px] text-white/60 transition hover:border-green-400 hover:text-green-400 disabled:opacity-40">
+                      Use a different photo
+                    </button>
+                  </div>
+                ) : (
+                  <label className="flex h-44 cursor-pointer flex-col items-center justify-center border border-dashed border-white/15 text-white/40 transition hover:border-green-400 hover:text-green-400">
+                    <Plus size={22} />
+                    <span className="mt-2 text-[14px]">Take or upload a photo of your ID</span>
+                    <span className="mono mt-1 text-[10px] text-white/30">JPG or PNG · up to {MAX_MB}MB</span>
+                    <input type="file" accept="image/*" capture="environment" onChange={handleFileChange} className="hidden" />
+                  </label>
                 )}
+
+                <ul className="mt-6 space-y-2 text-[13px] text-white/45">
+                  <li>· Lay it flat in good light, no glare</li>
+                  <li>· All four corners in the photo</li>
+                  <li>· Name and photo must match your profile</li>
+                </ul>
+
+                <p className="mt-6 flex items-start gap-2 text-[12px] leading-relaxed text-white/35">
+                  <Lock size={13} className="mt-0.5 shrink-0" />
+                  Only 100Gigs admins see your ID. It’s never shown on your profile.
+                </p>
+
+                <button type="submit" disabled={submitting || !file}
+                  className="mt-8 inline-flex w-full items-center justify-center gap-2 rounded-full bg-green-400 px-8 py-3.5 text-[14px] font-medium text-[#080f0a] transition hover:bg-green-300 disabled:bg-white/[0.06] disabled:text-white/30 sm:w-max">
+                  {submitting ? <><Loader2 size={16} className="animate-spin" /> Uploading…</> : vStatus === 'rejected' ? 'Submit again' : 'Submit for review'}
+                </button>
+              </form>
+            )}
+          </div>
+        </section>
+
+        {/* ─── 02 Payout ─── */}
+        <section className="grid gap-8 border-t border-white/10 pt-16 md:grid-cols-[260px_1fr] md:gap-14">
+          <div>
+            <p className="mono mb-3 text-[11px] text-green-400">02</p>
+            <h2 className="text-xl font-medium text-white">Payout account</h2>
+            <p className="mt-2 text-[14px] leading-relaxed text-white/45">
+              Where we send your money when a client pays through 100Gigs. We keep a 10% fee; the rest is yours.
+            </p>
+          </div>
+
+          <div>
+            {hasBank ? (
+              <div className="border border-white/10 bg-[#0b150e] p-6">
+                <p className="mono mb-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-green-400">
+                  <Check size={12} strokeWidth={3} /> Account saved
+                </p>
+                <p className="text-[17px] font-medium text-white">{existingBank.accountName}</p>
+                <p className="mono mt-1 text-[13px] text-white/50">
+                  {existingBank.bankName} · {maskAccount(existingBank.accountNumber)}
+                </p>
+                <button onClick={() => { setEditingBank(true); resetBankForm(); }}
+                  className="mt-5 border-b border-white/20 pb-0.5 text-[13px] text-white/60 transition hover:border-green-400 hover:text-green-400">
+                  Change account
+                </button>
               </div>
-
-              {/* Save bank details button */}
-              <button
-                onClick={handleSaveBankDetails}
-                disabled={!bankVerified || savingBank}
-                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold text-white transition disabled:opacity-40"
-                style={{
-                  background: bankVerified
-                    ? 'linear-gradient(135deg,#16a34a,#15803d)'
-                    : 'rgba(255,255,255,0.06)',
-                  border: bankVerified ? 'none' : '1px solid rgba(255,255,255,0.08)',
-                }}
-              >
-                {savingBank
-                  ? <><Loader2 size={15} className="animate-spin" /> Saving...</>
-                  : <><Building2 size={15} /> Save Bank Details</>
-                }
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* ── ID Document Upload ───────────────────────────────────────── */}
-        {canSubmit && (
-          <form onSubmit={handleSubmit} className="p-6 rounded-2xl space-y-5" style={glassCard}>
-            <div className="flex items-center gap-2.5 mb-1">
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center"
-                style={{ background: 'rgba(74,222,128,0.12)' }}>
-                <ShieldCheck size={14} className="text-green-400" />
-              </div>
-              <p className="text-sm font-semibold text-white">Identity Document</p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-widest text-white/40 mb-2">
-                Government-issued ID <span className="text-red-400">*</span>
-              </label>
-              <p className="text-xs text-white/30 mb-4">
-                National ID, driver's license, or passport. Make sure it's clear and all details are visible.
-              </p>
-
-              {preview ? (
-                <div className="relative">
-                  <img src={preview} alt="Document preview"
-                    className="w-full max-h-64 object-contain rounded-xl"
-                    style={{ border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.02)' }} />
-                  <button type="button" onClick={() => { setFile(null); setPreview(null); }}
-                    className="mt-3 text-xs text-white/40 hover:text-white/70 transition">
-                    Choose a different file
-                  </button>
+            ) : (
+              <div className="space-y-8">
+                <div>
+                  <label htmlFor="bank" className={label}>Bank</label>
+                  {banksFailed ? (
+                    <p className="text-[14px] text-white/55">
+                      Couldn’t load the bank list.{' '}
+                      <button onClick={fetchBanks} className="text-white underline underline-offset-4 hover:text-green-400">Try again</button>
+                    </p>
+                  ) : (
+                    <>
+                      {banks.length > 12 && (
+                        <input value={bankQuery} onChange={(e) => setBankQuery(e.target.value)}
+                          placeholder="Search banks — e.g. Opay, GTBank, Moniepoint"
+                          className={`${input} mb-4 text-[15px]`} aria-label="Search banks" />
+                      )}
+                      <select id="bank" value={bankCode} onChange={(e) => setBankCode(e.target.value)} disabled={loadingBanks}
+                        className={`${input} ${bankCode ? '' : 'text-white/30'}`}>
+                        <option value="">{loadingBanks ? 'Loading banks…' : filteredBanks.length ? 'Choose your bank' : 'No bank matches that search'}</option>
+                        {filteredBanks.map((b) => <option key={b.code} value={b.code}>{b.name}</option>)}
+                        {selectedBank && !filteredBanks.includes(selectedBank) && (
+                          <option value={selectedBank.code}>{selectedBank.name}</option>
+                        )}
+                      </select>
+                    </>
+                  )}
                 </div>
-              ) : (
-                <label
-                  className="w-full h-40 rounded-xl flex flex-col items-center justify-center cursor-pointer transition"
-                  style={{ border: '1px dashed rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.02)' }}
-                  onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(74,222,128,0.4)'}
-                  onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'}
-                >
-                  <Upload size={24} className="text-white/20 mb-2" />
-                  <span className="text-sm text-white/30">Click to upload your ID</span>
-                  <span className="text-xs text-white/20 mt-1">PNG, JPG up to 10MB</span>
-                  <input type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
-                </label>
-              )}
-            </div>
 
-            <div className="flex items-start gap-2 p-3 rounded-xl" style={{ background: 'rgba(255,255,255,0.03)' }}>
-              <AlertCircle size={14} className="text-white/30 mt-0.5 shrink-0" />
-              <p className="text-xs text-white/30">
-                Your document is only visible to admins reviewing your application and is never shown publicly.
-              </p>
-            </div>
+                <div>
+                  <label htmlFor="acct" className={label}>Account number</label>
+                  <input id="acct" inputMode="numeric" autoComplete="off" value={accountNumber}
+                    onChange={(e) => setAccountNumber(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                    placeholder="10 digits" className={`${input} mono tracking-[0.12em]`} />
+                  <p className="mono mt-2 text-right text-[10px] text-white/25">{accountNumber.length}/10</p>
+                </div>
 
-            <button type="submit" disabled={submitting || !file}
-              className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-semibold text-white transition-all active:scale-[0.99] disabled:opacity-50"
-              style={{
-                background:  (submitting || !file) ? 'rgba(22,163,74,0.4)' : 'linear-gradient(135deg,#16a34a,#15803d)',
-                boxShadow:   (submitting || !file) ? 'none' : '0 4px 24px rgba(22,163,74,0.35)',
-              }}>
-              {submitting
-                ? <><Loader2 size={18} className="animate-spin" /> Submitting...</>
-                : 'Submit for Verification'
-              }
-            </button>
-          </form>
-        )}
+                <div aria-live="polite" className="min-h-[3.5rem]">
+                  <p className={label}>Account name</p>
+                  {resolvingBank ? (
+                    <p className="inline-flex items-center gap-2 text-[15px] text-white/45">
+                      <Loader2 size={15} className="animate-spin" /> Checking with your bank…
+                    </p>
+                  ) : accountName ? (
+                    <p className="inline-flex items-center gap-2 text-[17px] text-green-400">
+                      <Check size={16} strokeWidth={2.5} /> {accountName}
+                    </p>
+                  ) : resolveError ? (
+                    <p className="text-[13px] text-red-300">{resolveError}</p>
+                  ) : (
+                    <p className="text-[14px] text-white/30">Appears once you pick a bank and enter 10 digits.</p>
+                  )}
+                </div>
+
+                {accountName && (
+                  <p className="text-[12px] leading-relaxed text-white/40">
+                    Make sure this is your name. Payments can’t be pulled back once sent to the wrong account.
+                  </p>
+                )}
+
+                <div className="flex flex-wrap items-center gap-4">
+                  <button onClick={handleSaveBankDetails} disabled={!bankVerified || savingBank}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-green-400 px-8 py-3.5 text-[14px] font-medium text-[#080f0a] transition hover:bg-green-300 disabled:bg-white/[0.06] disabled:text-white/30 sm:w-max">
+                    {savingBank ? <><Loader2 size={16} className="animate-spin" /> Saving…</> : 'Save payout account'}
+                  </button>
+                  {editingBank && (
+                    <button onClick={() => { setEditingBank(false); resetBankForm(); }} disabled={savingBank}
+                      className="text-[13px] text-white/50 transition hover:text-white">
+                      Keep current account
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
       </div>
     </div>
   );
