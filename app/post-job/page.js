@@ -1,45 +1,55 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { toast } from 'sonner';
-import { Upload, X, Plus, Loader2, Briefcase, MapPin, DollarSign, Calendar, Image, ArrowRight } from 'lucide-react';
+import { X, Plus, Loader2, ArrowRight, ArrowUpRight } from 'lucide-react';
 
 const CATEGORIES = [
   'Plumbing', 'Electrical', 'Carpentry', 'Makeup & Hair',
   'Cleaning', 'Painting', 'Car Repair', 'Tailoring',
   'Graphic Design', 'Photography', 'Tutoring', 'Delivery',
-  'Event Planning', 'AC Repair', 'Other'
+  'Event Planning', 'AC Repair', 'Other',
 ];
 
 const LOCATIONS = [
   'GRA Phase 1', 'GRA Phase 2', 'Trans Amadi', 'Woji',
   'Elelenwo', 'Rumuomasi', 'Rumuola', 'Diobu', 'Borokiri',
   'D-Line', 'Rumuigbo', 'Ozuoba', 'Choba', 'Ada George',
-  'Rukpokwu', 'Eneka', 'Mgbuoba', 'Rumola',
-  'Port Harcourt City', 'Asari-Toru', 'Other'
+  'Rukpokwu', 'Eneka', 'Mgbuoba',
+  'Port Harcourt City', 'Asari-Toru', 'Other',
 ];
 
-const glassCard = {
-  background: 'rgba(255,255,255,0.04)',
-  border: '1px solid rgba(255,255,255,0.08)',
-  backdropFilter: 'blur(12px)',
-  WebkitBackdropFilter: 'blur(12px)',
-};
+const MAX_IMAGES = 5;
+const MAX_MB = 10;
+const TITLE_MAX = 100;
+const DESC_MAX = 2000;
 
-function Section({ icon: Icon, title, children }) {
-  return (
-    <div className="p-6 rounded-2xl" style={glassCard}>
-      <div className="flex items-center gap-2.5 mb-5">
-        <div className="w-7 h-7 rounded-lg flex items-center justify-center"
-          style={{ background: 'rgba(74,222,128,0.12)' }}>
-          <Icon size={14} className="text-green-400" />
-        </div>
-        <p className="text-sm font-semibold text-white">{title}</p>
-      </div>
-      {children}
-    </div>
-  );
+// Today's date in the user's own timezone (toISOString uses UTC, which
+// allowed picking yesterday as a deadline just after midnight in Lagos)
+function todayLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+const naira = (n) => `₦${Number(n || 0).toLocaleString('en-NG')}`;
+
+function validate(f) {
+  const e = {};
+  const title = f.title.trim();
+  const desc = f.description.trim();
+  if (!title) e.title = 'Give the job a title.';
+  else if (title.length < 10) e.title = 'A bit more detail — at least 10 characters.';
+  if (!desc) e.description = 'Describe what needs doing.';
+  else if (desc.length < 30) e.description = `Add a little more — ${30 - desc.length} more characters.`;
+  if (!f.category) e.category = 'Pick the trade this job needs.';
+  if (!f.location) e.location = 'Pick the area the job is in.';
+  const lo = Number(f.budgetMin), hi = Number(f.budgetMax);
+  if (!f.budgetMin || !f.budgetMax) e.budget = 'Enter both a minimum and maximum.';
+  else if (lo <= 0) e.budget = 'The minimum must be more than ₦0.';
+  else if (lo > hi) e.budget = 'The minimum can’t be higher than the maximum.';
+  return e;
 }
 
 export default function PostJob() {
@@ -50,321 +60,347 @@ export default function PostJob() {
     title: '', description: '', category: '',
     budgetMin: '', budgetMax: '', location: '', deadline: '',
   });
-  const [images, setImages] = useState([]);
-  const [imagePreviews, setImagePreviews] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [uploadingImages, setUploadingImages] = useState(false);
-  const [visible, setVisible] = useState(false);
+  // Each image keeps its own preview URL so they can't get out of order
+  const [images, setImages] = useState([]); // [{ file, url }]
+  const [errors, setErrors] = useState({});
+  const [submitted, setSubmitted] = useState(false);
+  const [phase, setPhase] = useState('idle'); // idle | uploading | posting
+  const refs = { title: useRef(null), description: useRef(null), category: useRef(null), location: useRef(null), budget: useRef(null) };
 
   useEffect(() => {
-    if (status === 'unauthenticated') router.push('/login');
-    const t = setTimeout(() => setVisible(true), 50);
-    return () => clearTimeout(t);
-  }, [status]);
+    if (status === 'unauthenticated') router.push('/login?callbackUrl=%2Fpost-job');
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Free preview memory when leaving the page
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
+  useEffect(() => () => imagesRef.current.forEach((img) => URL.revokeObjectURL(img.url)), []);
+
+  // Re-check live once they've tried to submit
+  useEffect(() => { if (submitted) setErrors(validate(formData)); }, [formData, submitted]);
+
+  const shell = (children) => (
+    <div className="pj min-h-screen bg-[#080f0a] text-[#e9efe9] antialiased">
+      <style>{`
+        .pj { font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif; }
+        .serif { font-family: var(--font-serif), Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+        .mono { font-family: var(--font-mono), ui-monospace, monospace; }
+        .pj select option { background: #0b150e; color: #fff; }
+        .pj input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+        .pj input[type=date]::-webkit-calendar-picker-indicator { filter: invert(1); opacity: .4; cursor: pointer; }
+      `}</style>
+      {children}
+    </div>
+  );
 
   if (status === 'loading') {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-[#080f0a]">
-        <div className="w-10 h-10 rounded-full border-2 border-green-500/20 border-t-green-500 animate-spin" />
+    return shell(
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="mono text-[11px] uppercase tracking-[0.18em] text-white/35">Loading…</p>
       </div>
     );
   }
-
   if (!session) return null;
 
-  if (!['client', 'admin'].includes(session?.user?.role)) {
-  return (
-      <div className="min-h-screen bg-[#080f0a] flex items-center justify-center px-4">
-        <div className="text-center p-10 rounded-3xl max-w-md w-full"
-          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
-          <Briefcase size={36} className="mx-auto mb-4" style={{ color: 'rgba(255,255,255,0.2)' }} />
-          <h2 className="text-xl font-bold text-white mb-2">Clients Only</h2>
-          <p className="text-white/40 text-sm mb-6">Only clients can post jobs. You're logged in as a service provider.</p>
-          <button onClick={() => router.push('/browse')}
-            className="px-6 py-3 rounded-xl text-sm font-semibold text-white transition"
-            style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 16px rgba(22,163,74,0.3)' }}>
-            Browse Available Jobs
-          </button>
-        </div>
+  if (!['client', 'admin'].includes(session.user.role)) {
+    return shell(
+      <div className="mx-auto flex min-h-screen max-w-5xl flex-col justify-center px-5 md:px-8">
+        <p className="mono mb-5 text-[11px] uppercase tracking-[0.18em] text-white/35">Provider account</p>
+        <p className="serif max-w-xl text-5xl leading-[0.95] md:text-6xl">Posting jobs is for clients.</p>
+        <p className="mt-6 max-w-md text-[15px] leading-relaxed text-white/55">
+          You’re logged in as a service provider, so you apply to jobs rather than post them.
+        </p>
+        <Link href="/browse"
+          className="group mt-10 inline-flex w-max items-center gap-2 rounded-full bg-green-400 px-7 py-3.5 text-[14px] font-medium text-[#080f0a] transition hover:bg-green-300">
+          Browse open jobs <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
+        </Link>
       </div>
     );
   }
 
-  const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
+  const set = (name, value) => setFormData((f) => ({ ...f, [name]: value }));
+  const handleChange = (e) => set(e.target.name, e.target.value);
 
   const handleImageChange = (e) => {
-    const files = Array.from(e.target.files);
-    if (files.length + images.length > 5) { toast.error('Maximum 5 images allowed'); return; }
-    const validFiles = files.filter(file => {
-      if (file.size > 10 * 1024 * 1024) { toast.error(`${file.name} is too large (max 10MB)`); return false; }
+    const files = Array.from(e.target.files || []);
+    e.target.value = ''; // so picking the same file again still works
+    const room = MAX_IMAGES - images.length;
+    if (files.length > room) toast.error(`You can add ${room} more photo${room === 1 ? '' : 's'} (max ${MAX_IMAGES}).`);
+    const valid = files.slice(0, room).filter((file) => {
+      if (!file.type.startsWith('image/')) { toast.error(`${file.name} isn’t an image`); return false; }
+      if (file.size > MAX_MB * 1024 * 1024) { toast.error(`${file.name} is over ${MAX_MB}MB`); return false; }
       return true;
     });
-    setImages(prev => [...prev, ...validFiles]);
-    validFiles.forEach(file => {
-      const reader = new FileReader();
-      reader.onloadend = () => setImagePreviews(prev => [...prev, reader.result]);
-      reader.readAsDataURL(file);
-    });
+    setImages((prev) => [...prev, ...valid.map((file) => ({ file, url: URL.createObjectURL(file) }))]);
   };
 
   const removeImage = (index) => {
-    setImages(prev => prev.filter((_, i) => i !== index));
-    setImagePreviews(prev => prev.filter((_, i) => i !== index));
+    setImages((prev) => {
+      URL.revokeObjectURL(prev[index].url);
+      return prev.filter((_, i) => i !== index);
+    });
   };
 
   const uploadImages = async () => {
-    if (images.length === 0) return [];
-    setUploadingImages(true);
-    const uploadedUrls = [];
-    try {
-      for (const image of images) {
-        const formDataImg = new FormData();
-        formDataImg.append('file', image);
-        const res = await fetch('/api/upload', { method: 'POST', body: formDataImg });
-        if (!res.ok) throw new Error('Image upload failed');
-        const data = await res.json();
-        uploadedUrls.push(data.url);
-      }
-    } catch {
-      toast.error('Failed to upload images');
-      throw new Error('Upload failed');
-    } finally {
-      setUploadingImages(false);
-    }
-    return uploadedUrls;
+    const urls = await Promise.all(images.map(async ({ file }) => {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/upload', { method: 'POST', body: fd });
+      if (!res.ok) throw new Error('upload');
+      const data = await res.json();
+      return data.url;
+    }));
+    return urls;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.title.trim()) return toast.error('Job title is required');
-    if (formData.title.trim().length < 10) return toast.error('Title must be at least 10 characters');
-    if (!formData.description.trim()) return toast.error('Description is required');
-    if (formData.description.trim().length < 30) return toast.error('Description must be at least 30 characters');
-    if (!formData.category) return toast.error('Please select a category');
-    if (!formData.location) return toast.error('Please select a location');
-    if (!formData.budgetMin || !formData.budgetMax) return toast.error('Please enter budget range');
-    if (Number(formData.budgetMin) <= 0) return toast.error('Minimum budget must be greater than 0');
-    if (Number(formData.budgetMin) > Number(formData.budgetMax)) return toast.error('Minimum budget cannot exceed maximum');
+    setSubmitted(true);
+    const errs = validate(formData);
+    setErrors(errs);
+    const first = ['title', 'description', 'category', 'location', 'budget'].find((k) => errs[k]);
+    if (first) {
+      refs[first].current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      refs[first].current?.querySelector('input,textarea,select,button')?.focus({ preventScroll: true });
+      return;
+    }
 
-    setLoading(true);
     try {
       let imageUrls = [];
-      if (images.length > 0) { toast.loading('Uploading images...'); imageUrls = await uploadImages(); toast.dismiss(); }
+      if (images.length) {
+        setPhase('uploading');
+        try { imageUrls = await uploadImages(); }
+        catch { toast.error('Couldn’t upload your photos. Try again, or remove them and post without.'); setPhase('idle'); return; }
+      }
+      setPhase('posting');
       const res = await fetch('/api/jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, budgetMin: Number(formData.budgetMin), budgetMax: Number(formData.budgetMax), images: imageUrls }),
+        body: JSON.stringify({
+          ...formData,
+          title: formData.title.trim(),
+          description: formData.description.trim(),
+          budgetMin: Number(formData.budgetMin),
+          budgetMax: Number(formData.budgetMax),
+          images: imageUrls,
+        }),
       });
-      const data = await res.json();
-      if (!res.ok) { toast.error(data.error || 'Failed to post job'); return; }
-      toast.success('Job posted successfully!');
-      router.push(`/jobs/${data._id}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data._id) { toast.error(data.error || 'Couldn’t post the job. Please try again.'); setPhase('idle'); return; }
+      toast.success('Your job is live');
+      router.push(`/jobs/${data._id}`); // keep the button busy while we navigate
     } catch {
       toast.error('Something went wrong. Please try again.');
-    } finally {
-      setLoading(false);
+      setPhase('idle');
     }
   };
 
-  const inputStyle = {
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    color: 'white',
-  };
-
-  const inputClass = "w-full px-4 py-3.5 rounded-xl text-sm outline-none transition placeholder-white/20";
-  const onFocus = e => e.target.style.borderColor = 'rgba(74,222,128,0.5)';
-  const onBlur  = e => e.target.style.borderColor = 'rgba(255,255,255,0.1)';
-  const labelClass = "block text-xs font-semibold uppercase tracking-widest text-white/40 mb-2";
-
-
-
-  return (
-    <div className="min-h-screen bg-[#080f0a] relative overflow-x-hidden">
-      <style>{`
-        @keyframes fadeUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
-        @keyframes drift {
-          0%,100% { transform:translate(0,0) scale(1); }
-          33% { transform:translate(30px,-20px) scale(1.05); }
-          66% { transform:translate(-20px,15px) scale(0.97); }
-        }
-        .fade-up { animation: fadeUp 0.55s cubic-bezier(.22,1,.36,1) forwards; }
-        .drift { animation: drift 14s ease-in-out infinite; }
-        .d1{animation-delay:.05s} .d2{animation-delay:.1s} .d3{animation-delay:.15s}
-        .d4{animation-delay:.2s}  .d5{animation-delay:.25s} .d6{animation-delay:.3s}
-        select option { background: #111; color: white; }
-      `}</style>
-
-      {/* Background orbs */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-[-10%] right-[-5%] w-[500px] h-[500px] rounded-full drift"
-          style={{ background: 'radial-gradient(circle, rgba(22,163,74,0.12) 0%, transparent 70%)' }} />
-        <div className="absolute bottom-[-10%] left-[-5%] w-[400px] h-[400px] rounded-full drift"
-          style={{ background: 'radial-gradient(circle, rgba(16,185,129,0.1) 0%, transparent 70%)', animationDelay: '5s' }} />
-        <div className="absolute inset-0 opacity-[0.025]" style={{
-          backgroundImage: 'linear-gradient(rgba(255,255,255,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.8) 1px, transparent 1px)',
-          backgroundSize: '72px 72px',
-        }} />
+  const busy = phase !== 'idle';
+  const label = 'mono mb-3 block text-[10px] uppercase tracking-[0.16em] text-white/35';
+  const input = (err) =>
+    `w-full border-b bg-transparent pb-3 text-[16px] text-white outline-none transition-colors placeholder:text-white/20 focus:border-green-400 ${err ? 'border-red-400/70' : 'border-white/15'}`;
+  const Err = ({ k }) => (errors[k] ? <p className="mt-2 text-[12px] text-red-300">{errors[k]}</p> : null);
+  const Step = ({ n, title, hint }) => (
+    <div className="mb-6 flex items-baseline gap-4">
+      <span className="mono text-[11px] text-green-400">{String(n).padStart(2, '0')}</span>
+      <div>
+        <h2 className="text-[17px] font-medium text-white">{title}</h2>
+        {hint && <p className="mt-1 text-[13px] text-white/40">{hint}</p>}
       </div>
+    </div>
+  );
 
-      <div className="relative max-w-2xl mx-auto px-4 py-12">
+  const lo = Number(formData.budgetMin), hi = Number(formData.budgetMax);
+  const previewBudget = formData.budgetMin && formData.budgetMax && lo <= hi
+    ? (lo === hi ? naira(lo) : `${naira(lo)} – ${naira(hi)}`)
+    : formData.budgetMin ? `From ${naira(lo)}` : '₦ —';
 
-        {/* Header */}
-        <div className={`mb-8 opacity-0 ${visible ? 'fade-up' : ''}`}>
-          <p className="text-xs font-semibold uppercase tracking-widest text-green-400/60 mb-2">New Listing</p>
-          <h1 className="text-3xl font-bold text-white mb-1">Post a Job</h1>
-          <p className="text-white/35 text-sm">Fill in the details and providers will apply.</p>
-        </div>
+  return shell(
+    <div className="mx-auto max-w-6xl px-5 pb-20 pt-10 md:px-8 md:pt-16">
+      <header className="mb-14 max-w-2xl">
+        <h1 className="serif text-5xl leading-[0.95] md:text-7xl">
+          Post a <em className="text-green-400">job.</em>
+        </h1>
+        <p className="mt-6 text-[15px] leading-relaxed text-white/55">
+          Tell local providers what you need. Clear jobs with photos and a fair budget get the best applicants, usually within a day.
+        </p>
+      </header>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="grid gap-16 lg:grid-cols-[1fr_340px] lg:gap-16">
+        <form onSubmit={handleSubmit} noValidate className="min-w-0 space-y-14">
 
-          {/* Title */}
-          <div className={`opacity-0 ${visible ? 'fade-up d1' : ''}`}>
-            <Section icon={Briefcase} title="Job Title">
-              <label className={labelClass}>Title <span className="text-red-400">*</span></label>
-              <input type="text" name="title" value={formData.title} onChange={handleChange}
-                className={inputClass} style={inputStyle}
-                placeholder="e.g. Fix leaking ceiling in Woji"
-                onFocus={onFocus} onBlur={onBlur} required />
-              <p className="text-xs text-white/20 mt-2">{formData.title.length}/100 characters</p>
-            </Section>
-          </div>
-
-          {/* Description */}
-          <div className={`opacity-0 ${visible ? 'fade-up d2' : ''}`}>
-            <Section icon={Briefcase} title="Description">
-              <label className={labelClass}>Details <span className="text-red-400">*</span></label>
-              <textarea name="description" value={formData.description} onChange={handleChange}
-                rows={5} className={`${inputClass} resize-none`} style={inputStyle}
-                placeholder="Describe what needs to be done, any special requirements, materials needed..."
-                onFocus={onFocus} onBlur={onBlur} required />
-              <p className="text-xs text-white/20 mt-2">{formData.description.length} characters — more detail attracts better applicants</p>
-            </Section>
-          </div>
-
-          {/* Category + Location */}
-          <div className={`opacity-0 ${visible ? 'fade-up d3' : ''}`}>
-            <Section icon={MapPin} title="Category & Location">
-              <div className="grid md:grid-cols-2 gap-4">
-                <div>
-                  <label className={labelClass}>Category <span className="text-red-400">*</span></label>
-                  <select name="category" value={formData.category} onChange={handleChange}
-                    className={inputClass} style={inputStyle}
-                    onFocus={onFocus} onBlur={onBlur} required>
-                    <option value="">Select category</option>
-                    {CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className={labelClass}>Location <span className="text-red-400">*</span></label>
-                  <select name="location" value={formData.location} onChange={handleChange}
-                    className={inputClass} style={inputStyle}
-                    onFocus={onFocus} onBlur={onBlur} required>
-                    <option value="">Select area in PH</option>
-                    {LOCATIONS.map(loc => <option key={loc} value={loc}>{loc}</option>)}
-                  </select>
-                </div>
+          {/* 01 — What */}
+          <section>
+            <Step n={1} title="What do you need done?" />
+            <div ref={refs.title}>
+              <label htmlFor="title" className={label}>Title</label>
+              <input id="title" name="title" value={formData.title} onChange={handleChange}
+                maxLength={TITLE_MAX} autoComplete="off"
+                placeholder="e.g. Fix leaking kitchen sink in Woji"
+                className={input(errors.title)} />
+              <div className="flex justify-between">
+                <Err k="title" />
+                <p className="mono ml-auto mt-2 text-[10px] text-white/25">{formData.title.length}/{TITLE_MAX}</p>
               </div>
-            </Section>
-          </div>
+            </div>
 
-          {/* Budget */}
-          <div className={`opacity-0 ${visible ? 'fade-up d4' : ''}`}>
-            <Section icon={DollarSign} title="Budget Range (₦)">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className={labelClass}>Minimum <span className="text-red-400">*</span></label>
-                  <input type="number" name="budgetMin" value={formData.budgetMin} onChange={handleChange}
-                    placeholder="5,000" min="0" className={inputClass} style={inputStyle}
-                    onFocus={onFocus} onBlur={onBlur} required />
-                </div>
-                <div>
-                  <label className={labelClass}>Maximum <span className="text-red-400">*</span></label>
-                  <input type="number" name="budgetMax" value={formData.budgetMax} onChange={handleChange}
-                    placeholder="20,000" min="0" className={inputClass} style={inputStyle}
-                    onFocus={onFocus} onBlur={onBlur} required />
-                </div>
+            <div ref={refs.description} className="mt-8">
+              <label htmlFor="description" className={label}>Details</label>
+              <textarea id="description" name="description" value={formData.description} onChange={handleChange}
+                rows={6} maxLength={DESC_MAX}
+                placeholder="What’s the problem, how big is the job, anything the provider should bring, best time to come…"
+                className={`${input(errors.description)} resize-none leading-relaxed`} />
+              <div className="flex justify-between">
+                <Err k="description" />
+                <p className="mono ml-auto mt-2 text-[10px] text-white/25">{formData.description.length}/{DESC_MAX}</p>
               </div>
-              {formData.budgetMin && formData.budgetMax && Number(formData.budgetMin) <= Number(formData.budgetMax) && (
-                <p className="text-sm text-green-400 font-semibold mt-3">
-                  ₦{Number(formData.budgetMin).toLocaleString()} — ₦{Number(formData.budgetMax).toLocaleString()}
-                </p>
-              )}
-            </Section>
-          </div>
+            </div>
+          </section>
 
-          {/* Deadline */}
-          <div className={`opacity-0 ${visible ? 'fade-up d5' : ''}`}>
-            <Section icon={Calendar} title="Deadline">
-              <label className={labelClass}>Date <span className="text-white/20 normal-case tracking-normal font-normal">(optional)</span></label>
-              <input type="date" name="deadline" value={formData.deadline} onChange={handleChange}
-                min={new Date().toISOString().split('T')[0]}
-                className={inputClass} style={{ ...inputStyle, colorScheme: 'dark' }}
-                onFocus={onFocus} onBlur={onBlur} />
-            </Section>
-          </div>
+          {/* 02 — Trade */}
+          <section ref={refs.category}>
+            <Step n={2} title="Which trade?" />
+            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Category">
+              {CATEGORIES.map((c) => {
+                const on = formData.category === c;
+                return (
+                  <button key={c} type="button" role="radio" aria-checked={on} onClick={() => set('category', c)}
+                    className={`rounded-full border px-4 py-2 text-[13px] transition ${
+                      on ? 'border-green-400 bg-green-400 text-[#080f0a]' : 'border-white/15 text-white/65 hover:border-white/40 hover:text-white'
+                    }`}>
+                    {c}
+                  </button>
+                );
+              })}
+            </div>
+            <Err k="category" />
+          </section>
 
-          {/* Images */}
-          <div className={`opacity-0 ${visible ? 'fade-up d6' : ''}`}>
-            <Section icon={Image} title="Photos">
-              <label className={labelClass}>Upload <span className="text-white/20 normal-case tracking-normal font-normal">(optional, max 5)</span></label>
-              <p className="text-xs text-white/30 mb-4">Add photos to help providers understand the job better.</p>
+          {/* 03 — Where & when */}
+          <section>
+            <Step n={3} title="Where and when?" />
+            <div className="grid gap-8 sm:grid-cols-2">
+              <div ref={refs.location}>
+                <label htmlFor="location" className={label}>Area</label>
+                <select id="location" name="location" value={formData.location} onChange={handleChange}
+                  className={`${input(errors.location)} ${formData.location ? '' : 'text-white/30'}`}>
+                  <option value="">Choose an area</option>
+                  {LOCATIONS.map((l) => <option key={l} value={l}>{l}</option>)}
+                </select>
+                <Err k="location" />
+              </div>
+              <div>
+                <label htmlFor="deadline" className={label}>Needed by <span className="normal-case tracking-normal text-white/25">· optional</span></label>
+                <input id="deadline" type="date" name="deadline" value={formData.deadline} onChange={handleChange}
+                  min={todayLocal()} style={{ colorScheme: 'dark' }}
+                  className={`${input(false)} mono ${formData.deadline ? '' : 'text-white/30'}`} />
+              </div>
+            </div>
+          </section>
 
-              {imagePreviews.length > 0 ? (
-                <div className="grid grid-cols-3 gap-3">
-                  {imagePreviews.map((preview, index) => (
-                    <div key={index} className="relative group">
-                      <img src={preview} alt={`Preview ${index + 1}`}
-                        className="w-full h-28 object-cover rounded-xl"
-                        style={{ border: '1px solid rgba(255,255,255,0.1)' }} />
-                      <button type="button" onClick={() => removeImage(index)}
-                        className="absolute top-2 right-2 w-6 h-6 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
-                        style={{ background: 'rgba(239,68,68,0.9)' }}>
-                        <X size={11} className="text-white" />
-                      </button>
-                    </div>
-                  ))}
-                  {imagePreviews.length < 5 && (
-                    <label className="w-full h-28 rounded-xl flex flex-col items-center justify-center cursor-pointer transition"
-                      style={{ border: '1px dashed rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.03)' }}
-                      onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(74,222,128,0.4)'}
-                      onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'}>
-                      <Plus size={18} className="text-white/25 mb-1" />
-                      <span className="text-xs text-white/25">Add more</span>
-                      <input type="file" accept="image/*" multiple onChange={handleImageChange} className="hidden" />
-                    </label>
-                  )}
+          {/* 04 — Budget */}
+          <section ref={refs.budget}>
+            <Step n={4} title="What’s your budget?" hint="A range works best. Providers can suggest their own rate when they apply." />
+            <div className="grid grid-cols-2 gap-6">
+              {[['budgetMin', 'From', '5,000'], ['budgetMax', 'Up to', '20,000']].map(([name, l, ph]) => (
+                <div key={name}>
+                  <label htmlFor={name} className={label}>{l}</label>
+                  <div className={`flex items-baseline border-b pb-3 transition-colors focus-within:border-green-400 ${errors.budget ? 'border-red-400/70' : 'border-white/15'}`}>
+                    <span className="mono mr-2 text-[16px] text-white/35">₦</span>
+                    <input id={name} type="number" inputMode="numeric" min="0" name={name}
+                      value={formData[name]} onChange={handleChange} placeholder={ph}
+                      className="mono min-w-0 flex-1 bg-transparent text-[18px] text-white outline-none placeholder:text-white/20" />
+                  </div>
                 </div>
-              ) : (
-                <label className="w-full h-32 rounded-xl flex flex-col items-center justify-center cursor-pointer transition"
-                  style={{ border: '1px dashed rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.02)' }}
-                  onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(74,222,128,0.4)'}
-                  onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'}>
-                  <Upload size={24} className="text-white/20 mb-2" />
-                  <span className="text-sm text-white/30">Click to upload photos</span>
-                  <span className="text-xs text-white/20 mt-1">PNG, JPG up to 10MB each</span>
-                  <input type="file" accept="image/*" multiple onChange={handleImageChange} className="hidden" />
+              ))}
+            </div>
+            <Err k="budget" />
+          </section>
+
+          {/* 05 — Photos */}
+          <section>
+            <Step n={5} title="Add photos" hint={`Optional, up to ${MAX_IMAGES}. A picture of the problem saves a lot of back-and-forth.`} />
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+              {images.map((img, i) => (
+                <div key={img.url} className="relative aspect-square overflow-hidden border border-white/10">
+                  <img src={img.url} alt={`Photo ${i + 1}`} className="h-full w-full object-cover" />
+                  <button type="button" onClick={() => removeImage(i)} disabled={busy} aria-label={`Remove photo ${i + 1}`}
+                    className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-[#080f0a]/80 text-white transition hover:bg-red-500">
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+              {images.length < MAX_IMAGES && (
+                <label className="flex aspect-square cursor-pointer flex-col items-center justify-center border border-dashed border-white/15 text-white/35 transition hover:border-green-400 hover:text-green-400">
+                  <Plus size={20} />
+                  <span className="mono mt-1.5 text-[10px] uppercase tracking-[0.14em]">{images.length ? 'Add' : 'Photos'}</span>
+                  <input type="file" accept="image/*" multiple onChange={handleImageChange} className="hidden" disabled={busy} />
                 </label>
               )}
-            </Section>
-          </div>
+            </div>
+            <p className="mono mt-3 text-[10px] text-white/25">JPG or PNG · up to {MAX_MB}MB each</p>
+          </section>
 
           {/* Submit */}
-          <div className={`opacity-0 ${visible ? 'fade-up d6' : ''}`}>
-            <button type="submit" disabled={loading || uploadingImages}
-              className="w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-semibold text-white transition-all active:scale-[0.99] disabled:opacity-50 group"
-              style={{
-                background: (loading || uploadingImages) ? 'rgba(22,163,74,0.6)' : 'linear-gradient(135deg,#16a34a,#15803d)',
-                boxShadow: (loading || uploadingImages) ? 'none' : '0 4px 24px rgba(22,163,74,0.35)',
-              }}>
-              {loading || uploadingImages ? (
-                <><Loader2 size={18} className="animate-spin" />{uploadingImages ? 'Uploading images...' : 'Posting job...'}</>
-              ) : (
-                <>Post Job <ArrowRight size={17} className="group-hover:translate-x-0.5 transition-transform" /></>
-              )}
+          <div className="border-t border-white/10 pt-10">
+            {submitted && Object.keys(errors).length > 0 && (
+              <p className="mb-5 border-l-2 border-red-400 pl-3 text-[13px] text-red-300">
+                A few things need fixing before you can post. They’re marked in red above.
+              </p>
+            )}
+            <button type="submit" disabled={busy}
+              className="group flex w-full items-center justify-center gap-2 rounded-full bg-green-400 py-4 text-[15px] font-medium text-[#080f0a] transition hover:bg-green-300 active:scale-[0.99] disabled:bg-white/[0.06] disabled:text-white/40 sm:w-max sm:px-10">
+              {phase === 'uploading' ? <><Loader2 size={17} className="animate-spin" /> Uploading photos…</>
+                : phase === 'posting' ? <><Loader2 size={17} className="animate-spin" /> Posting…</>
+                : <>Post job <ArrowRight size={17} className="transition-transform group-hover:translate-x-0.5" /></>}
             </button>
+            <p className="mt-4 text-[12px] text-white/35">Posting is free. You only pay when the job is done.</p>
           </div>
         </form>
+
+        {/* Live preview */}
+        <aside className="hidden lg:block">
+          <div className="sticky top-8">
+            <p className="mono mb-3 text-[10px] uppercase tracking-[0.16em] text-white/35">How it’ll look</p>
+            <div className="border border-white/10 bg-[#0b150e]">
+              <div className="flex items-center justify-between border-b border-white/10 px-5 py-3">
+                <span className="mono text-[11px] uppercase tracking-[0.16em] text-white/45">On the board</span>
+                <span className="mono flex items-center gap-2 text-[11px] text-green-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-green-400" /> open
+                </span>
+              </div>
+              <div className="px-5 py-5">
+                <p className="mono mb-2 text-[11px] text-white/35">
+                  {formData.category || 'Trade'} · {formData.location || 'Area'} · just now
+                </p>
+                <p className={`text-[16px] leading-snug ${formData.title.trim() ? 'text-white' : 'text-white/25'}`}>
+                  {formData.title.trim() || 'Your job title'}
+                </p>
+                <p className={`mt-1.5 line-clamp-2 text-[13px] leading-relaxed ${formData.description.trim() ? 'text-white/45' : 'text-white/20'}`}>
+                  {formData.description.trim() || 'The first lines of your description show here.'}
+                </p>
+                {images.length > 0 && (
+                  <div className="mt-4 flex gap-1.5">
+                    {images.slice(0, 4).map((img) => (
+                      <img key={img.url} src={img.url} alt="" className="h-10 w-10 object-cover" />
+                    ))}
+                  </div>
+                )}
+                <div className="mt-4 flex items-center justify-between">
+                  <p className="mono text-[14px] text-green-400">{previewBudget}</p>
+                  <span className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 text-white/30">
+                    <ArrowUpRight size={14} />
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <ul className="mt-8 space-y-3 text-[13px] leading-relaxed text-white/45">
+              <li className="border-l border-white/15 pl-3">Mention a street or landmark in the details — it helps providers judge the distance.</li>
+              <li className="border-l border-white/15 pl-3">Mention timing. “This Saturday morning” gets faster replies than nothing.</li>
+            </ul>
+          </div>
+        </aside>
       </div>
     </div>
   );
