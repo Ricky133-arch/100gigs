@@ -1,723 +1,550 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import {
-  Loader2, ShieldCheck, ShieldX, Clock, Users, Briefcase,
-  ExternalLink, X, ShieldAlert, Search, Ban, CheckCircle,
-  Trash2, ChevronDown, Filter, TrendingUp, AlertTriangle,
-  Eye, RefreshCw, UserCheck, UserX, CreditCard,
-} from 'lucide-react';
 import Link from 'next/link';
+import { Loader2, Search, X, ChevronDown, RefreshCw, ArrowUpRight, ArrowRight } from 'lucide-react';
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-const glass = {
-  background:          'rgba(255,255,255,0.04)',
-  border:              '1px solid rgba(255,255,255,0.08)',
-  backdropFilter:      'blur(12px)',
-  WebkitBackdropFilter:'blur(12px)',
+/* ── helpers ─────────────────────────────────────────────── */
+
+const safeJson = (res) => res.json().catch(() => ({}));
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' }) : '—');
+
+const VSTATUS = {
+  verified:    { dot: 'bg-green-400', text: 'text-green-400', label: 'Verified' },
+  pending:     { dot: 'bg-amber-300', text: 'text-amber-300', label: 'To review' },
+  rejected:    { dot: 'bg-red-400',   text: 'text-red-400',   label: 'Rejected' },
+  unsubmitted: { dot: 'bg-white/25',  text: 'text-white/40',  label: 'Not submitted' },
 };
 
-const STATUS_STYLES = {
-  verified:    { color: '#4ade80', bg: 'rgba(74,222,128,0.12)',   label: 'Verified',       icon: ShieldCheck  },
-  pending:     { color: '#facc15', bg: 'rgba(250,204,21,0.12)',   label: 'Pending Review', icon: Clock        },
-  rejected:    { color: '#f87171', bg: 'rgba(248,113,113,0.12)', label: 'Rejected',       icon: ShieldX      },
-  unsubmitted: { color: '#ffffff40', bg: 'rgba(255,255,255,0.06)', label: 'Not Submitted', icon: ShieldAlert  },
-};
-
-// ── Small reusable components ─────────────────────────────────────────────────
-function StatusPill({ status }) {
-  const s = STATUS_STYLES[status] || STATUS_STYLES.unsubmitted;
-  const Icon = s.icon;
+function Status({ value }) {
+  const s = VSTATUS[value] || VSTATUS.unsubmitted;
   return (
-    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
-      style={{ background: s.bg, color: s.color }}>
-      <Icon size={11} /> {s.label}
+    <span className={`mono inline-flex items-center gap-2 whitespace-nowrap text-[11px] uppercase tracking-[0.12em] ${s.text}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />{s.label}
     </span>
   );
 }
 
-function StatCard({ label, value, icon: Icon, color, sub }) {
+const REJECT_REASONS = [
+  'The photo is blurry. Please upload a clearer one where every detail can be read.',
+  'The name on the ID doesn’t match your profile name.',
+  'This ID has expired. Please upload a valid one.',
+  'We couldn’t accept this as a government ID. Use a NIN slip/card, driver’s licence, voter’s card or passport.',
+  'Part of the ID is cut off. Please include all four corners.',
+];
+
+function Modal({ children, onClose, wide = false }) {
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [onClose]);
   return (
-    <div className="p-5 rounded-2xl flex flex-col gap-2" style={glass}>
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-white/35 font-medium">{label}</p>
-        <div className="w-8 h-8 rounded-lg flex items-center justify-center"
-          style={{ background: `${color}20` }}>
-          <Icon size={15} style={{ color }} />
-        </div>
+    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/70 sm:items-center sm:p-4" onClick={onClose}>
+      <div role="dialog" aria-modal="true"
+        className={`relative max-h-[92vh] w-full overflow-y-auto border border-white/10 bg-[#0b150e] sm:rounded-2xl ${wide ? 'max-w-2xl' : 'max-w-md'}`}
+        onClick={(e) => e.stopPropagation()}>
+        <button onClick={onClose} aria-label="Close"
+          className="absolute right-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-full text-white/40 transition hover:bg-white/[0.06] hover:text-white">
+          <X size={16} />
+        </button>
+        {children}
       </div>
-      <p className="text-2xl font-bold text-white tabular-nums">{value ?? '—'}</p>
-      {sub && <p className="text-xs text-white/25">{sub}</p>}
     </div>
   );
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
+/* ── page ────────────────────────────────────────────────── */
+
 export default function AdminDashboard() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const isAdmin = session?.user?.role === 'admin';
+  const myId = session?.user?.id;
 
-  // Data
-  const [stats,        setStats]        = useState(null);
-  const [users,        setUsers]        = useState([]);
+  const [stats, setStats] = useState(null);
+  const [users, setUsers] = useState([]);
   const [loadingStats, setLoadingStats] = useState(true);
   const [loadingUsers, setLoadingUsers] = useState(true);
+  const [usersFailed, setUsersFailed] = useState(false);
 
-  // Filters
-  const [tab,                setTab]                = useState('providers'); // providers | clients | suspended
-  const [search,             setSearch]             = useState('');
-  const [verifFilter,        setVerifFilter]        = useState('');          // pending | verified | rejected | unsubmitted
-  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const [tab, setTab] = useState('providers'); // providers | clients | suspended
+  const [search, setSearch] = useState('');
+  const [verifFilter, setVerifFilter] = useState('');
+  const [expanded, setExpanded] = useState(null);
 
-  // Modals
-  const [docModal,         setDocModal]         = useState(null);
-  const [confirmModal,     setConfirmModal]     = useState(null); // { user, action }
-  const [rejectReason,     setRejectReason]     = useState('');
-  const [suspendReason,    setSuspendReason]    = useState('');
-  const [showRejectInput,  setShowRejectInput]  = useState(false);
-  const [actionLoading,    setActionLoading]    = useState(false);
+  const [docModal, setDocModal] = useState(null);
+  const [docBroken, setDocBroken] = useState(false);
+  const [showRejectInput, setShowRejectInput] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [confirmModal, setConfirmModal] = useState(null); // { user, action }
+  const [suspendReason, setSuspendReason] = useState('');
+  const [deleteTyped, setDeleteTyped] = useState('');
+  const [busyId, setBusyId] = useState(null);
 
-  // ── Auth guard ──────────────────────────────────────────────────────────────
+  // Send non-admins away instead of showing a blank page
   useEffect(() => {
-    if (status === 'unauthenticated') router.push('/login');
-  }, [status]);
+    if (status === 'unauthenticated') router.replace('/login?callbackUrl=%2Fadmin');
+    else if (status === 'authenticated' && !isAdmin) router.replace('/dashboard');
+  }, [status, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Fetch stats ─────────────────────────────────────────────────────────────
   const fetchStats = useCallback(async () => {
+    if (!isAdmin) return;
     setLoadingStats(true);
     try {
       const res = await fetch('/api/admin/stats');
       if (res.ok) setStats(await res.json());
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoadingStats(false);
-    }
-  }, []);
+    } catch (e) { console.error(e); }
+    finally { setLoadingStats(false); }
+  }, [isAdmin]);
 
-  // ── Fetch users ─────────────────────────────────────────────────────────────
   const fetchUsers = useCallback(async () => {
-    if (!session || session.user.role !== 'admin') return;
+    if (!isAdmin) return;
     setLoadingUsers(true);
+    setUsersFailed(false);
     try {
       const params = new URLSearchParams();
-      if (tab === 'providers')  params.set('role', 'provider');
-      if (tab === 'clients')    params.set('role', 'client');
-      if (tab === 'suspended')  params.set('isSuspended', 'true');
-      if (verifFilter)          params.set('verificationStatus', verifFilter);
-
+      if (tab === 'providers') params.set('role', 'provider');
+      if (tab === 'clients') params.set('role', 'client');
+      if (tab === 'suspended') params.set('isSuspended', 'true');
+      if (verifFilter && tab === 'providers') params.set('verificationStatus', verifFilter);
       const res = await fetch(`/api/admin/users?${params}`);
-      if (res.ok) setUsers(await res.json());
-    } catch (e) {
-      toast.error('Failed to load users');
+      if (!res.ok) throw new Error('users');
+      const data = await res.json();
+      setUsers(Array.isArray(data) ? data : []);
+    } catch {
+      setUsersFailed(true);
+      setUsers([]);
     } finally {
       setLoadingUsers(false);
     }
-  }, [session, tab, verifFilter]);
+  }, [isAdmin, tab, verifFilter]);
 
   useEffect(() => { fetchStats(); }, [fetchStats]);
-  useEffect(() => { fetchUsers(); }, [fetchUsers]);
+  useEffect(() => { fetchUsers(); setExpanded(null); }, [fetchUsers]);
 
-  // ── Search filter (client-side) ─────────────────────────────────────────────
-  const filtered = users.filter(u => {
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      u.name?.toLowerCase().includes(q)  ||
-      u.email?.toLowerCase().includes(q) ||
-      u.phone?.toLowerCase().includes(q) ||
-      u.location?.toLowerCase().includes(q)
-    );
-  });
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter((u) =>
+      [u.name, u.email, u.phone, u.location].some((v) => v?.toLowerCase().includes(q)));
+  }, [users, search]);
 
-  // ── Verification action ─────────────────────────────────────────────────────
-  const handleVerify = async (userId, action, reason) => {
-    setActionLoading(true);
+  const closeDoc = () => { setDocModal(null); setShowRejectInput(false); setRejectReason(''); setDocBroken(false); };
+
+  const openDoc = (u) => { setDocModal(u); setShowRejectInput(false); setRejectReason(''); setDocBroken(false); };
+
+  // After a decision, jump straight to the next person waiting, so a queue can be cleared in one go
+  const nextPendingAfter = (id) => {
+    const queue = filtered.filter((u) => u.verificationStatus === 'pending' && u.verificationDoc && u._id !== id);
+    const idx = filtered.findIndex((u) => u._id === id);
+    return queue.find((u) => filtered.indexOf(u) > idx) || queue[0] || null;
+  };
+
+  const handleVerify = async (user, action, reason) => {
+    setBusyId(user._id);
     try {
-      const res = await fetch(`/api/admin/users/${userId}/verify`, {
-        method:  'PUT',
+      const res = await fetch(`/api/admin/users/${user._id}/verify`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ action, reason }),
+        body: JSON.stringify({ action, reason }),
       });
-      const data = await res.json();
-      if (!res.ok) { toast.error(data.error || 'Action failed'); return; }
-      toast.success(data.message);
-      setUsers(prev => prev.map(u => u._id === userId ? data.user : u));
-      setDocModal(null);
-      setShowRejectInput(false);
-      setRejectReason('');
+      const data = await safeJson(res);
+      if (!res.ok) { toast.error(data.error || 'That didn’t work'); return; }
+      toast.success(data.message || (action === 'verify' ? `${user.name} verified` : `${user.name} rejected`));
+      setUsers((prev) => prev.map((u) => (u._id === user._id ? (data.user || { ...u, verificationStatus: action === 'verify' ? 'verified' : 'rejected', verificationRejectionReason: reason }) : u)));
       fetchStats();
+      const next = nextPendingAfter(user._id);
+      if (next) openDoc(next); else closeDoc();
     } catch {
       toast.error('Something went wrong');
     } finally {
-      setActionLoading(false);
+      setBusyId(null);
     }
   };
 
-  // ── Suspend / unsuspend / delete ────────────────────────────────────────────
-  const handleUserAction = async (userId, action, reason) => {
-    setActionLoading(true);
+  const handleUserAction = async (user, action, reason) => {
+    setBusyId(user._id);
     try {
-      const res = await fetch(`/api/admin/users/${userId}`, {
-        method:  'PATCH',
+      const res = await fetch(`/api/admin/users/${user._id}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ action, reason }),
+        body: JSON.stringify({ action, reason }),
       });
-      const data = await res.json();
-      if (!res.ok) { toast.error(data.error || 'Action failed'); return; }
-
+      const data = await safeJson(res);
+      if (!res.ok) { toast.error(data.error || 'That didn’t work'); return; }
       toast.success(data.message || 'Done');
-
-      if (action === 'delete') {
-        setUsers(prev => prev.filter(u => u._id !== userId));
+      if (action === 'delete' || (tab === 'suspended' && action === 'unsuspend')) {
+        setUsers((prev) => prev.filter((u) => u._id !== user._id));
       } else {
-        setUsers(prev => prev.map(u => u._id === userId ? data.user : u));
+        setUsers((prev) => prev.map((u) => (u._id === user._id ? (data.user || { ...u, isSuspended: action === 'suspend', suspendedReason: reason }) : u)));
       }
-
       setConfirmModal(null);
       setSuspendReason('');
+      setDeleteTyped('');
       fetchStats();
     } catch {
       toast.error('Something went wrong');
     } finally {
-      setActionLoading(false);
+      setBusyId(null);
     }
   };
 
-  // ── Guards ──────────────────────────────────────────────────────────────────
-  if (status === 'loading') {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-[#080f0a]">
-        <div className="w-10 h-10 rounded-full border-2 border-green-500/20 border-t-green-500 animate-spin" />
+  /* ── render ───────────────────────────────────────────── */
+
+  const shell = (children) => (
+    <div className="ad min-h-screen bg-[#080f0a] text-[#e9efe9] antialiased">
+      <style>{`
+        .ad { font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif; }
+        .serif { font-family: var(--font-serif), Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+        .mono { font-family: var(--font-mono), ui-monospace, monospace; }
+        .ad select option { background: #0b150e; color: #fff; }
+      `}</style>
+      {children}
+    </div>
+  );
+
+  if (status === 'loading' || !isAdmin) {
+    return shell(
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="mono text-[11px] uppercase tracking-[0.18em] text-white/35">Loading…</p>
       </div>
     );
   }
-  if (!session || session.user.role !== 'admin') return null;
 
-  const pendingCount   = users.filter(u => u.verificationStatus === 'pending').length;
-  const suspendedCount = users.filter(u => u.isSuspended).length;
+  const s = stats || {};
+  const pendingTotal = s.pendingVerifications || 0;
+  const TABS = [
+    { id: 'providers', label: 'Providers', count: s.totalProviders },
+    { id: 'clients', label: 'Clients', count: s.totalClients },
+    { id: 'suspended', label: 'Suspended', count: s.suspendedUsers },
+  ];
 
-  // ── Render ──────────────────────────────────────────────────────────────────
-  return (
-    <div className="min-h-screen bg-[#080f0a] pb-32">
-      <div className="max-w-5xl mx-auto px-4 py-10 space-y-8">
+  const label = 'mono mb-3 block text-[10px] uppercase tracking-[0.16em] text-white/35';
+  const btnGhost = 'inline-flex items-center justify-center gap-2 rounded-full border border-white/15 px-4 py-2 text-[13px] text-white/75 transition hover:border-white/40 hover:text-white disabled:opacity-40';
 
-        {/* Header */}
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-green-400/60 mb-1">Admin Panel</p>
-            <h1 className="text-3xl font-bold text-white">Dashboard</h1>
-            <p className="text-white/30 text-sm mt-1">Manage users, verifications, and platform activity</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Link href="/admin/payments"
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition"
-              style={{ background: 'rgba(74,222,128,0.12)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.25)' }}>
-              <CreditCard size={15} /> Payments
-            </Link>
-            <button onClick={() => { fetchStats(); fetchUsers(); }}
-              className="p-2.5 rounded-xl transition hover:bg-white/5"
-              style={{ color: 'rgba(255,255,255,0.4)' }}
-              title="Refresh">
-              <RefreshCw size={16} />
-            </button>
-          </div>
+  return shell(
+    <div className="mx-auto max-w-6xl px-5 pb-32 pt-10 md:px-8 md:pt-16">
+
+      {/* Header */}
+      <header className="mb-12 flex flex-wrap items-end justify-between gap-6">
+        <div>
+          <p className="mono mb-4 text-[11px] uppercase tracking-[0.18em] text-white/35">Admin</p>
+          <h1 className="serif text-5xl leading-none md:text-7xl">Overview</h1>
         </div>
-
-        {/* ── Stats grid ──────────────────────────────────────────────────── */}
-        {loadingStats ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {[...Array(8)].map((_, i) => (
-              <div key={i} className="p-5 rounded-2xl animate-pulse h-24" style={glass} />
-            ))}
-          </div>
-        ) : stats && (
-          <>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <StatCard label="Total Users"      value={stats.totalUsers}      icon={Users}       color="#4ade80" sub={`+${stats.newUsersThisWeek} this week`} />
-              <StatCard label="Clients"          value={stats.totalClients}    icon={Users}       color="#60a5fa" />
-              <StatCard label="Providers"        value={stats.totalProviders}  icon={Briefcase}   color="#a78bfa" />
-              <StatCard label="Suspended"        value={stats.suspendedUsers}  icon={Ban}         color="#f87171" />
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <StatCard label="Pending Review"   value={stats.pendingVerifications}  icon={Clock}       color="#facc15" sub="Need your attention" />
-              <StatCard label="Verified"         value={stats.verifiedProviders}     icon={ShieldCheck} color="#4ade80" />
-              <StatCard label="Rejected"         value={stats.rejectedVerifications} icon={ShieldX}     color="#f87171" />
-              <StatCard label="Open Jobs"        value={stats.openJobs}             icon={TrendingUp}  color="#34d399" sub={`of ${stats.totalJobs} total`} />
-            </div>
-
-            {/* Pending verification alert */}
-            {stats.pendingVerifications > 0 && (
-              <button
-                onClick={() => { setTab('providers'); setVerifFilter('pending'); }}
-                className="w-full flex items-center gap-4 p-4 rounded-2xl transition hover:brightness-110 text-left"
-                style={{ background: 'rgba(250,204,21,0.08)', border: '1px solid rgba(250,204,21,0.2)' }}>
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-                  style={{ background: 'rgba(250,204,21,0.15)' }}>
-                  <AlertTriangle size={18} style={{ color: '#facc15' }} />
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm font-semibold text-white">
-                    {stats.pendingVerifications} provider{stats.pendingVerifications > 1 ? 's' : ''} waiting for verification
-                  </p>
-                  <p className="text-xs text-white/35 mt-0.5">
-                    Click to filter and review submitted documents
-                  </p>
-                </div>
-                <span className="text-yellow-400 text-xs font-semibold">Review →</span>
-              </button>
-            )}
-          </>
-        )}
-
-        {/* ── Tabs ────────────────────────────────────────────────────────── */}
-        <div className="flex flex-wrap gap-2">
-          {[
-            { id: 'providers', label: 'Providers', icon: Briefcase, badge: pendingCount > 0 ? `${pendingCount} pending` : null },
-            { id: 'clients',   label: 'Clients',   icon: Users },
-            { id: 'suspended', label: 'Suspended', icon: Ban, badge: suspendedCount > 0 ? suspendedCount : null },
-          ].map(t => {
-            const Icon    = t.icon;
-            const active  = tab === t.id;
-            return (
-              <button key={t.id}
-                onClick={() => { setTab(t.id); setVerifFilter(''); setSearch(''); }}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition"
-                style={{
-                  background: active ? 'rgba(74,222,128,0.12)' : 'rgba(255,255,255,0.04)',
-                  color:      active ? '#4ade80' : 'rgba(255,255,255,0.5)',
-                  border:     `1px solid ${active ? 'rgba(74,222,128,0.25)' : 'rgba(255,255,255,0.08)'}`,
-                }}>
-                <Icon size={14} />
-                {t.label}
-                {t.badge && (
-                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold text-white"
-                    style={{ background: '#16a34a' }}>
-                    {t.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* ── Search + filter bar ──────────────────────────────────────────── */}
-        <div className="flex gap-3 flex-wrap">
-          {/* Search */}
-          <div className="flex-1 min-w-[200px] relative">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-              style={{ color: 'rgba(255,255,255,0.25)' }} />
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search name, email, phone, location…"
-              className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm outline-none"
-              style={{
-                background:  'rgba(255,255,255,0.05)',
-                border:      '1px solid rgba(255,255,255,0.1)',
-                color:       'white',
-              }}
-            />
-          </div>
-
-          {/* Verification filter (providers only) */}
-          {tab === 'providers' && (
-            <div className="relative">
-              <button
-                onClick={() => setShowFilterDropdown(!showFilterDropdown)}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition"
-                style={{
-                  background: verifFilter ? 'rgba(74,222,128,0.1)' : 'rgba(255,255,255,0.05)',
-                  border:     `1px solid ${verifFilter ? 'rgba(74,222,128,0.25)' : 'rgba(255,255,255,0.1)'}`,
-                  color:      verifFilter ? '#4ade80' : 'rgba(255,255,255,0.5)',
-                }}>
-                <Filter size={14} />
-                {verifFilter ? STATUS_STYLES[verifFilter]?.label : 'All statuses'}
-                <ChevronDown size={13} />
-              </button>
-              {showFilterDropdown && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setShowFilterDropdown(false)} />
-                  <div className="absolute right-0 top-full mt-2 z-20 w-48 rounded-xl overflow-hidden"
-                    style={{ background: '#0d1410', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
-                    {[
-                      { value: '',            label: 'All statuses' },
-                      { value: 'pending',     label: 'Pending Review' },
-                      { value: 'verified',    label: 'Verified' },
-                      { value: 'rejected',    label: 'Rejected' },
-                      { value: 'unsubmitted', label: 'Not Submitted' },
-                    ].map(opt => (
-                      <button key={opt.value}
-                        onClick={() => { setVerifFilter(opt.value); setShowFilterDropdown(false); }}
-                        className="w-full px-4 py-2.5 text-left text-sm transition hover:bg-white/5"
-                        style={{ color: verifFilter === opt.value ? '#4ade80' : 'rgba(255,255,255,0.6)' }}>
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Result count */}
-          <div className="flex items-center px-3 text-xs"
-            style={{ color: 'rgba(255,255,255,0.25)' }}>
-            {filtered.length} user{filtered.length !== 1 ? 's' : ''}
-          </div>
-        </div>
-
-        {/* ── User list ────────────────────────────────────────────────────── */}
-        <div className="rounded-2xl overflow-hidden" style={glass}>
-          {loadingUsers ? (
-            <div className="p-12 flex items-center justify-center">
-              <Loader2 size={24} className="animate-spin text-green-400" />
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="p-12 text-center">
-              <Users size={32} className="mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.1)' }} />
-              <p className="text-white/30 text-sm">No users found</p>
-            </div>
-          ) : (
-            <div className="divide-y" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
-              {filtered.map(u => (
-                <UserRow
-                  key={u._id}
-                  user={u}
-                  tab={tab}
-                  onReview={() => setDocModal(u)}
-                  onSuspend={() => { setConfirmModal({ user: u, action: 'suspend' }); }}
-                  onUnsuspend={() => handleUserAction(u._id, 'unsuspend')}
-                  onDelete={() => setConfirmModal({ user: u, action: 'delete' })}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── Document review modal ────────────────────────────────────────── */}
-      {docModal && (
-        <Modal onClose={() => { setDocModal(null); setShowRejectInput(false); setRejectReason(''); }}>
-          <div className="px-5 py-4 flex items-center justify-between border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-            <div>
-              <p className="text-sm font-semibold text-white">{docModal.name}</p>
-              <p className="text-xs text-white/30">{docModal.email} · {docModal.phone || 'No phone'}</p>
-            </div>
-            <button onClick={() => { setDocModal(null); setShowRejectInput(false); setRejectReason(''); }}
-              className="p-1.5 rounded-lg text-white/30 hover:text-white/60 transition">
-              <X size={18} />
-            </button>
-          </div>
-
-          <div className="p-5 space-y-4">
-            {/* Provider info */}
-            <div className="grid grid-cols-2 gap-3 text-xs">
-              {[
-                { label: 'Location', value: docModal.location || '—' },
-                { label: 'Status',   value: <StatusPill status={docModal.verificationStatus} /> },
-                { label: 'Skills',   value: docModal.skills?.join(', ') || '—' },
-                { label: 'Submitted',value: docModal.verificationSubmittedAt
-                    ? new Date(docModal.verificationSubmittedAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })
-                    : '—' },
-              ].map(row => (
-                <div key={row.label} className="p-3 rounded-xl" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                  <p className="text-white/30 mb-1">{row.label}</p>
-                  <p className="text-white font-medium">{row.value}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* Document image */}
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-2">Submitted Document</p>
-              <a href={docModal.verificationDoc} target="_blank" rel="noopener noreferrer"
-                className="block relative group rounded-xl overflow-hidden"
-                style={{ border: '1px solid rgba(255,255,255,0.1)' }}>
-                <img src={docModal.verificationDoc} alt="Verification document"
-                  className="w-full max-h-72 object-contain"
-                  style={{ background: 'rgba(255,255,255,0.02)' }} />
-                <div className="absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition"
-                  style={{ background: 'rgba(0,0,0,0.7)' }}>
-                  <ExternalLink size={13} className="text-white" />
-                </div>
-                <div className="absolute bottom-0 left-0 right-0 py-2 text-center text-xs text-white/50 opacity-0 group-hover:opacity-100 transition"
-                  style={{ background: 'rgba(0,0,0,0.5)' }}>
-                  Click to open full size ↗
-                </div>
-              </a>
-            </div>
-
-            {/* Previous rejection reason */}
-            {docModal.verificationStatus === 'rejected' && docModal.verificationRejectionReason && (
-              <div className="p-3 rounded-xl text-xs" style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)' }}>
-                <p className="text-red-400/70 mb-1">Previous rejection reason:</p>
-                <p className="text-red-300">{docModal.verificationRejectionReason}</p>
-              </div>
-            )}
-
-            {/* Action buttons */}
-            {showRejectInput ? (
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-widest text-white/40 mb-2">
-                  Reason for rejection <span className="text-red-400">*</span>
-                </label>
-                <textarea
-                  value={rejectReason}
-                  onChange={e => setRejectReason(e.target.value)}
-                  rows={3}
-                  placeholder="e.g. Document is blurry. Please re-upload a clearer photo of your ID."
-                  className="w-full px-4 py-3 rounded-xl text-sm outline-none resize-none"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}
-                />
-                <div className="flex gap-3 mt-3">
-                  <button onClick={() => setShowRejectInput(false)}
-                    className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
-                    style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.6)' }}>
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => handleVerify(docModal._id, 'reject', rejectReason)}
-                    disabled={actionLoading || !rejectReason.trim()}
-                    className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50 flex items-center justify-center gap-2"
-                    style={{ background: 'rgba(239,68,68,0.85)' }}>
-                    {actionLoading ? <Loader2 size={15} className="animate-spin" /> : <><ShieldX size={15} /> Confirm Rejection</>}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex gap-3">
-                <button onClick={() => setShowRejectInput(true)} disabled={actionLoading}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition disabled:opacity-50"
-                  style={{ background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.25)' }}>
-                  <ShieldX size={15} /> Reject
-                </button>
-                <button onClick={() => handleVerify(docModal._id, 'verify')} disabled={actionLoading}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white transition disabled:opacity-50"
-                  style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)' }}>
-                  {actionLoading ? <Loader2 size={15} className="animate-spin" /> : <><ShieldCheck size={15} /> Verify Provider</>}
-                </button>
-              </div>
-            )}
-          </div>
-        </Modal>
-      )}
-
-      {/* ── Suspend / Delete confirm modal ───────────────────────────────── */}
-      {confirmModal && (
-        <Modal onClose={() => { setConfirmModal(null); setSuspendReason(''); }}>
-          <div className="p-5">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center"
-                style={{ background: confirmModal.action === 'delete' ? 'rgba(239,68,68,0.15)' : 'rgba(250,204,21,0.15)' }}>
-                {confirmModal.action === 'delete'
-                  ? <Trash2 size={18} style={{ color: '#f87171' }} />
-                  : <Ban size={18} style={{ color: '#facc15' }} />
-                }
-              </div>
-              <div>
-                <p className="text-white font-semibold text-sm">
-                  {confirmModal.action === 'delete' ? 'Delete' : 'Suspend'} {confirmModal.user.name}?
-                </p>
-                <p className="text-white/30 text-xs">{confirmModal.user.email}</p>
-              </div>
-            </div>
-
-            <p className="text-white/40 text-sm mb-4">
-              {confirmModal.action === 'delete'
-                ? 'This is permanent and cannot be undone. All their data will be removed.'
-                : 'The user will be blocked from logging in. You can unsuspend them at any time.'
-              }
-            </p>
-
-            {confirmModal.action === 'suspend' && (
-              <textarea
-                value={suspendReason}
-                onChange={e => setSuspendReason(e.target.value)}
-                rows={2}
-                placeholder="Reason for suspension (optional — sent to user)"
-                className="w-full px-4 py-3 rounded-xl text-sm outline-none resize-none mb-4"
-                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}
-              />
-            )}
-
-            <div className="flex gap-3">
-              <button onClick={() => { setConfirmModal(null); setSuspendReason(''); }}
-                className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
-                style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.6)' }}>
-                Cancel
-              </button>
-              <button
-                onClick={() => handleUserAction(
-                  confirmModal.user._id,
-                  confirmModal.action,
-                  suspendReason
-                )}
-                disabled={actionLoading}
-                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50 flex items-center justify-center gap-2"
-                style={{ background: confirmModal.action === 'delete' ? 'rgba(239,68,68,0.85)' : 'rgba(234,179,8,0.85)' }}>
-                {actionLoading
-                  ? <Loader2 size={15} className="animate-spin" />
-                  : confirmModal.action === 'delete' ? 'Delete Permanently' : 'Suspend User'
-                }
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-// ── User row ──────────────────────────────────────────────────────────────────
-function UserRow({ user, tab, onReview, onSuspend, onUnsuspend, onDelete }) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
-      {/* Main row */}
-      <div className="px-5 py-4 flex items-center gap-4">
-        {/* Avatar */}
-        <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0"
-          style={{ background: user.isSuspended ? '#374151' : 'linear-gradient(135deg,#16a34a,#15803d)' }}>
-          {user.avatar
-            ? <img src={user.avatar} alt="" className="w-10 h-10 rounded-full object-cover" />
-            : user.name?.charAt(0).toUpperCase()
-          }
-        </div>
-
-        {/* Name + email */}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-sm font-semibold text-white truncate">{user.name}</p>
-            {user.isSuspended && (
-              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold"
-                style={{ background: 'rgba(239,68,68,0.15)', color: '#f87171' }}>
-                SUSPENDED
-              </span>
-            )}
-            {tab === 'providers' && user.verificationStatus === 'verified' && (
-              <ShieldCheck size={13} className="text-green-400 shrink-0" />
-            )}
-          </div>
-          <p className="text-xs text-white/30 truncate">{user.email}</p>
-        </div>
-
-        {/* Right side */}
-        <div className="flex items-center gap-3 shrink-0">
-          {tab === 'providers' && <StatusPill status={user.verificationStatus} />}
-
-          {tab === 'clients' && (
-            <span className="text-xs text-white/20">
-              {new Date(user.createdAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}
-            </span>
-          )}
-
-          {/* Expand button */}
-          <button onClick={() => setExpanded(!expanded)}
-            className="p-1.5 rounded-lg transition hover:bg-white/5"
-            style={{ color: expanded ? '#4ade80' : 'rgba(255,255,255,0.3)' }}>
-            <ChevronDown size={15} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+        <div className="flex items-center gap-2">
+          <Link href="/admin/payments" className={btnGhost}>Payments <ArrowUpRight size={14} /></Link>
+          <Link href="/admin/announce" className={btnGhost}>Announce <ArrowUpRight size={14} /></Link>
+          <button onClick={() => { fetchStats(); fetchUsers(); }} aria-label="Refresh"
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 text-white/60 transition hover:border-white/40 hover:text-white">
+            <RefreshCw size={15} className={loadingStats || loadingUsers ? 'animate-spin' : ''} />
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Expanded detail */}
-      {expanded && (
-        <div className="px-5 pb-4 space-y-3" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-          {/* Info grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3">
-            {[
-              { label: 'Phone',    value: user.phone    || '—' },
-              { label: 'Location', value: user.location || '—' },
-              { label: 'Joined',   value: new Date(user.createdAt).toLocaleDateString('en-NG') },
-              { label: 'Role',     value: user.role },
-            ].map(item => (
-              <div key={item.label} className="p-2.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)' }}>
-                <p className="text-[10px] text-white/25 uppercase tracking-wider mb-1">{item.label}</p>
-                <p className="text-xs text-white font-medium capitalize">{item.value}</p>
-              </div>
-            ))}
+      {/* Stats */}
+      <dl className="mb-6 grid grid-cols-2 border-y border-white/10 md:grid-cols-4">
+        {[
+          ['Users', s.totalUsers, s.newUsersThisWeek != null ? `+${s.newUsersThisWeek} this week` : null],
+          ['Providers', s.totalProviders, s.verifiedProviders != null ? `${s.verifiedProviders} verified` : null],
+          ['Clients', s.totalClients, null],
+          ['Open jobs', s.openJobs, s.totalJobs != null ? `of ${s.totalJobs} posted` : null],
+        ].map(([t, v, sub], i) => (
+          <div key={t} className={`py-6 ${i % 2 ? 'border-l border-white/10 pl-5 md:pl-8' : ''} ${i === 2 ? 'md:border-l md:border-white/10 md:pl-8' : ''} ${i >= 2 ? 'border-t border-white/10 md:border-t-0' : ''}`}>
+            <dt className="text-[12px] text-white/40">{t}</dt>
+            <dd className="mono mt-2 text-3xl text-white">{loadingStats ? '–' : (v ?? '—')}</dd>
+            {sub && !loadingStats && <p className="mono mt-1 text-[11px] text-white/35">{sub}</p>}
           </div>
+        ))}
+      </dl>
 
-          {/* Bio */}
-          {user.bio && (
-            <p className="text-xs text-white/40 leading-relaxed px-1">{user.bio}</p>
-          )}
-
-          {/* Skills */}
-          {user.skills?.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {user.skills.map(s => (
-                <span key={s} className="text-[11px] px-2 py-0.5 rounded-full"
-                  style={{ background: 'rgba(74,222,128,0.1)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.2)' }}>
-                  {s}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {/* Suspension reason */}
-          {user.isSuspended && user.suspendedReason && (
-            <div className="p-3 rounded-xl text-xs" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
-              <span className="text-red-400/70">Suspension reason: </span>
-              <span className="text-red-300">{user.suspendedReason}</span>
-            </div>
-          )}
-
-          {/* Action buttons */}
-          <div className="flex flex-wrap gap-2 pt-1">
-            {/* Review doc (providers with submitted doc) */}
-            {tab === 'providers' && user.verificationDoc && (
-              <button onClick={onReview}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
-                style={{ background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.7)' }}>
-                <Eye size={12} /> Review Document
-              </button>
-            )}
-
-            {/* Suspend / Unsuspend */}
-            {user.isSuspended ? (
-              <button onClick={onUnsuspend}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
-                style={{ background: 'rgba(74,222,128,0.1)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.2)' }}>
-                <UserCheck size={12} /> Unsuspend
-              </button>
-            ) : (
-              <button onClick={onSuspend}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
-                style={{ background: 'rgba(250,204,21,0.1)', color: '#facc15', border: '1px solid rgba(250,204,21,0.2)' }}>
-                <Ban size={12} /> Suspend
-              </button>
-            )}
-
-            {/* Delete */}
-            <button onClick={onDelete}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
-              style={{ background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.2)' }}>
-              <Trash2 size={12} /> Delete
-            </button>
-          </div>
-        </div>
+      {/* Review queue */}
+      {pendingTotal > 0 && (
+        <button
+          onClick={() => { setTab('providers'); setVerifFilter('pending'); setSearch(''); }}
+          className="group mb-14 flex w-full items-center justify-between gap-4 border-l-2 border-amber-300 py-3 pl-5 text-left">
+          <span>
+            <span className="mono block text-[10px] uppercase tracking-[0.16em] text-amber-300">Needs you</span>
+            <span className="mt-1 block text-[17px] text-white">
+              {pendingTotal} {pendingTotal === 1 ? 'ID is' : 'IDs are'} waiting for review
+            </span>
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-[13px] text-white/60 transition group-hover:text-amber-300">
+            Start reviewing <ArrowRight size={14} />
+          </span>
+        </button>
       )}
-    </div>
-  );
-}
 
-// ── Modal wrapper ─────────────────────────────────────────────────────────────
-function Modal({ children, onClose }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.75)' }}
-      onClick={onClose}>
-      <div className="w-full max-w-lg rounded-2xl overflow-hidden"
-        style={{ background: '#0d1410', border: '1px solid rgba(255,255,255,0.1)', maxHeight: '90vh', overflowY: 'auto' }}
-        onClick={e => e.stopPropagation()}>
-        {children}
+      {/* Tabs */}
+      <div className="mb-6 flex gap-6 border-b border-white/10 text-[14px]">
+        {TABS.map((t) => {
+          const on = tab === t.id;
+          return (
+            <button key={t.id} onClick={() => { setTab(t.id); setVerifFilter(''); setSearch(''); }}
+              className={`relative pb-3 transition-colors ${on ? 'text-white' : 'text-white/45 hover:text-white/80'}`}>
+              {t.label}
+              {t.count != null && <span className="mono ml-2 text-[11px] text-white/30">{t.count}</span>}
+              {on && <span className="absolute -bottom-px left-0 right-0 h-px bg-green-400" />}
+            </button>
+          );
+        })}
       </div>
+
+      {/* Search + filter */}
+      <div className="mb-2 flex flex-wrap items-end gap-6">
+        <div className="group flex min-w-[220px] flex-1 items-center border-b border-white/15 pb-2.5 transition-colors focus-within:border-green-400">
+          <Search size={16} className="mr-3 shrink-0 text-white/35 group-focus-within:text-green-400" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Name, email, phone or area"
+            className="min-w-0 flex-1 bg-transparent text-[15px] text-white outline-none placeholder:text-white/25" />
+          {search && (
+            <button onClick={() => setSearch('')} aria-label="Clear search" className="ml-2 text-white/30 hover:text-white"><X size={15} /></button>
+          )}
+        </div>
+        {tab === 'providers' && (
+          <select value={verifFilter} onChange={(e) => setVerifFilter(e.target.value)}
+            aria-label="Filter by verification"
+            className="border-b border-white/15 bg-transparent pb-2.5 text-[14px] text-white/80 outline-none focus:border-green-400">
+            <option value="">All statuses</option>
+            <option value="pending">To review</option>
+            <option value="verified">Verified</option>
+            <option value="rejected">Rejected</option>
+            <option value="unsubmitted">Not submitted</option>
+          </select>
+        )}
+        <p className="mono pb-2.5 text-[11px] text-white/35">{filtered.length} shown</p>
+      </div>
+
+      {/* List */}
+      <div className="border-t border-white/10">
+        {loadingUsers ? (
+          <ul>
+            {[0, 1, 2, 3, 4].map((i) => (
+              <li key={i} className="flex items-center gap-4 border-b border-white/[0.07] py-5">
+                <div className="h-9 w-9 animate-pulse rounded-full bg-white/[0.06]" />
+                <div className="flex-1 space-y-2"><div className="h-3 w-1/3 animate-pulse bg-white/[0.07]" /><div className="h-3 w-1/2 animate-pulse bg-white/[0.04]" /></div>
+              </li>
+            ))}
+          </ul>
+        ) : usersFailed ? (
+          <div className="py-14">
+            <p className="text-[15px] text-white/60">Couldn’t load users.</p>
+            <button onClick={fetchUsers} className="mt-4 border-b border-green-400 pb-0.5 text-[14px] text-white hover:text-green-400">Try again</button>
+          </div>
+        ) : filtered.length === 0 ? (
+          <p className="py-14 text-[15px] text-white/45">
+            {search ? 'Nobody matches that search.' : verifFilter === 'pending' ? 'Queue’s clear. Nothing waiting for review.' : 'Nobody here yet.'}
+          </p>
+        ) : (
+          <ul>
+            {filtered.map((u) => {
+              const open = expanded === u._id;
+              const isMe = u._id === myId;
+              const busy = busyId === u._id;
+              return (
+                <li key={u._id} className="border-b border-white/[0.07]">
+                  <button onClick={() => setExpanded(open ? null : u._id)} aria-expanded={open}
+                    className="flex w-full items-center gap-4 py-4 text-left transition-colors hover:bg-white/[0.02] md:px-2">
+                    <div className={`flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full text-[13px] font-semibold ${u.isSuspended ? 'bg-white/10 text-white/50' : 'bg-green-400 text-[#080f0a]'}`}>
+                      {u.avatar ? <img src={u.avatar} alt="" className="h-full w-full object-cover" /> : u.name?.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="flex items-center gap-2 truncate text-[15px] text-white">
+                        <span className="truncate">{u.name}</span>
+                        {isMe && <span className="mono text-[10px] uppercase tracking-[0.12em] text-white/35">You</span>}
+                        {u.isSuspended && <span className="mono text-[10px] uppercase tracking-[0.12em] text-red-400">Suspended</span>}
+                      </p>
+                      <p className="truncate text-[13px] text-white/40">{u.email}</p>
+                    </div>
+                    <div className="hidden shrink-0 items-center gap-6 sm:flex">
+                      {u.role === 'provider' ? <Status value={u.verificationStatus} /> : <span className="mono text-[11px] text-white/35">Joined {fmtDate(u.createdAt)}</span>}
+                    </div>
+                    <ChevronDown size={16} className={`shrink-0 text-white/30 transition-transform ${open ? 'rotate-180 text-green-400' : ''}`} />
+                  </button>
+
+                  {open && (
+                    <div className="pb-6 md:px-2">
+                      <div className="mb-4 sm:hidden">{u.role === 'provider' && <Status value={u.verificationStatus} />}</div>
+                      <dl className="grid grid-cols-2 gap-x-6 gap-y-4 border-t border-white/[0.07] pt-5 sm:grid-cols-4">
+                        {[['Phone', u.phone], ['Area', u.location], ['Joined', fmtDate(u.createdAt)], ['Role', u.role]].map(([k, v]) => (
+                          <div key={k}>
+                            <dt className="mono text-[10px] uppercase tracking-[0.14em] text-white/30">{k}</dt>
+                            <dd className={`mt-1 text-[14px] capitalize text-white/85 ${k === 'Phone' ? 'mono normal-case' : ''}`}>{v || '—'}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                      {u.bio && <p className="mt-5 max-w-2xl text-[14px] leading-relaxed text-white/55">{u.bio}</p>}
+                      {u.skills?.length > 0 && <p className="mono mt-3 text-[12px] text-white/40">{u.skills.join(' · ')}</p>}
+                      {u.isSuspended && u.suspendedReason && (
+                        <p className="mt-4 border-l-2 border-red-400 pl-3 text-[13px] text-red-300">Suspended: {u.suspendedReason}</p>
+                      )}
+
+                      <div className="mt-6 flex flex-wrap items-center gap-2">
+                        {u.role === 'provider' && u.verificationDoc && (
+                          <button onClick={() => openDoc(u)}
+                            className="inline-flex items-center gap-2 rounded-full bg-green-400 px-4 py-2 text-[13px] font-medium text-[#080f0a] transition hover:bg-green-300">
+                            {u.verificationStatus === 'pending' ? 'Review ID' : 'View ID'}
+                          </button>
+                        )}
+                        <Link href={`/profile/${u._id}`} className={btnGhost}>Public profile <ArrowUpRight size={13} /></Link>
+                        {!isMe && u.role !== 'admin' && (
+                          <>
+                            {u.isSuspended ? (
+                              <button onClick={() => handleUserAction(u, 'unsuspend')} disabled={busy} className={btnGhost}>
+                                {busy && <Loader2 size={13} className="animate-spin" />} Unsuspend
+                              </button>
+                            ) : (
+                              <button onClick={() => setConfirmModal({ user: u, action: 'suspend' })} className={btnGhost}>Suspend</button>
+                            )}
+                            <button onClick={() => { setConfirmModal({ user: u, action: 'delete' }); setDeleteTyped(''); }}
+                              className="rounded-full px-3 py-2 text-[13px] text-red-400/80 transition hover:text-red-300">
+                              Delete
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {/* ─── ID review ─── */}
+      {docModal && (
+        <Modal onClose={closeDoc} wide>
+          <div className="p-6 md:p-8">
+            <p className="mono mb-3 text-[10px] uppercase tracking-[0.16em] text-white/35">ID review</p>
+            <h2 className="serif pr-8 text-3xl leading-tight">{docModal.name}</h2>
+            <p className="mt-1 text-[13px] text-white/45">{docModal.email}{docModal.phone ? ` · ${docModal.phone}` : ''}</p>
+
+            <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4 border-y border-white/10 py-5 sm:grid-cols-4">
+              {[['Status', <Status key="s" value={docModal.verificationStatus} />], ['Submitted', fmtDate(docModal.verificationSubmittedAt)], ['Area', docModal.location || '—'], ['Services', docModal.skills?.join(', ') || '—']].map(([k, v]) => (
+                <div key={k}>
+                  <dt className="mono text-[10px] uppercase tracking-[0.14em] text-white/30">{k}</dt>
+                  <dd className="mt-1 text-[13px] text-white/85">{v}</dd>
+                </div>
+              ))}
+            </dl>
+
+            <div className="mt-6">
+              {docBroken ? (
+                <div className="flex h-48 flex-col items-center justify-center border border-white/10 text-center">
+                  <p className="text-[14px] text-white/55">Can’t preview this file here.</p>
+                  <a href={docModal.verificationDoc} target="_blank" rel="noopener noreferrer"
+                    className="mt-3 inline-flex items-center gap-1.5 text-[13px] text-green-400 hover:underline underline-offset-4">
+                    Open it in a new tab <ArrowUpRight size={13} />
+                  </a>
+                </div>
+              ) : (
+                <a href={docModal.verificationDoc} target="_blank" rel="noopener noreferrer" className="group relative block border border-white/10 bg-white/[0.02]">
+                  <img src={docModal.verificationDoc} alt={`ID submitted by ${docModal.name}`}
+                    onError={() => setDocBroken(true)} className="mx-auto max-h-[22rem] w-auto object-contain" />
+                  <span className="mono absolute bottom-2 right-2 bg-[#080f0a]/80 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-white/70 opacity-0 transition group-hover:opacity-100">
+                    Full size ↗
+                  </span>
+                </a>
+              )}
+              <p className="mt-3 text-[12px] text-white/35">Check the name matches <span className="text-white/70">“{docModal.name}”</span> and the photo is clear and current.</p>
+            </div>
+
+            {docModal.verificationStatus === 'rejected' && docModal.verificationRejectionReason && (
+              <p className="mt-5 border-l-2 border-red-400 pl-3 text-[13px] text-red-300">Last time: {docModal.verificationRejectionReason}</p>
+            )}
+
+            {showRejectInput ? (
+              <div className="mt-8">
+                <p className={label}>Why? This is sent to {docModal.name?.split(' ')[0]}</p>
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {REJECT_REASONS.map((r) => (
+                    <button key={r} type="button" onClick={() => setRejectReason(r)}
+                      className={`rounded-full border px-3 py-1.5 text-left text-[12px] transition ${rejectReason === r ? 'border-red-400 text-red-300' : 'border-white/15 text-white/60 hover:border-white/40 hover:text-white'}`}>
+                      {r.split('.')[0]}
+                    </button>
+                  ))}
+                </div>
+                <textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={3}
+                  placeholder="Or write your own"
+                  className="w-full resize-none border-b border-white/15 bg-transparent pb-3 text-[15px] leading-relaxed text-white outline-none placeholder:text-white/20 focus:border-green-400" />
+                <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row">
+                  <button onClick={() => setShowRejectInput(false)} className={`${btnGhost} flex-1 py-3`}>Back</button>
+                  <button onClick={() => handleVerify(docModal, 'reject', rejectReason.trim())}
+                    disabled={busyId === docModal._id || !rejectReason.trim()}
+                    className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-red-500 px-5 py-3 text-[14px] font-medium text-white transition hover:bg-red-400 disabled:opacity-40">
+                    {busyId === docModal._id && <Loader2 size={15} className="animate-spin" />} Reject and notify
+                  </button>
+                </div>
+              </div>
+            ) : docModal.verificationStatus !== 'verified' ? (
+              <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row">
+                <button onClick={() => setShowRejectInput(true)} disabled={busyId === docModal._id} className={`${btnGhost} flex-1 py-3`}>Reject</button>
+                <button onClick={() => handleVerify(docModal, 'verify')} disabled={busyId === docModal._id}
+                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-green-400 px-5 py-3 text-[14px] font-medium text-[#080f0a] transition hover:bg-green-300 disabled:opacity-50">
+                  {busyId === docModal._id && <Loader2 size={15} className="animate-spin" />} Approve
+                </button>
+              </div>
+            ) : (
+              <div className="mt-8">
+                <button onClick={() => setShowRejectInput(true)} className="text-[13px] text-red-400/80 transition hover:text-red-300">
+                  Remove verification
+                </button>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {/* ─── Suspend / delete ─── */}
+      {confirmModal && (() => {
+        const { user, action } = confirmModal;
+        const isDelete = action === 'delete';
+        const busy = busyId === user._id;
+        const typedOk = deleteTyped.trim().toLowerCase() === (user.name || '').trim().toLowerCase();
+        const close = () => { if (!busy) { setConfirmModal(null); setSuspendReason(''); setDeleteTyped(''); } };
+        return (
+          <Modal onClose={close}>
+            <div className="p-7">
+              <p className={`mono mb-4 text-[10px] uppercase tracking-[0.16em] ${isDelete ? 'text-red-400' : 'text-amber-300'}`}>{isDelete ? 'Delete account' : 'Suspend account'}</p>
+              <h2 className="serif pr-8 text-3xl leading-tight">{isDelete ? 'Delete' : 'Suspend'} {user.name}?</h2>
+              <p className="mt-1 text-[13px] text-white/40">{user.email}</p>
+              <p className="mt-5 text-[14px] leading-relaxed text-white/60">
+                {isDelete
+                  ? 'Their account and data are removed for good. This can’t be undone. If you might want them back, suspend instead.'
+                  : 'They won’t be able to log in until you unsuspend them. Nothing is deleted.'}
+              </p>
+
+              {isDelete ? (
+                <div className="mt-6">
+                  <label htmlFor="confirm-name" className={label}>Type their name to confirm</label>
+                  <input id="confirm-name" value={deleteTyped} onChange={(e) => setDeleteTyped(e.target.value)} placeholder={user.name} autoComplete="off"
+                    className="w-full border-b border-white/15 bg-transparent pb-3 text-[15px] text-white outline-none placeholder:text-white/20 focus:border-red-400" />
+                </div>
+              ) : (
+                <div className="mt-6">
+                  <label htmlFor="suspend-reason" className={label}>Reason <span className="normal-case tracking-normal text-white/25">· optional, sent to them</span></label>
+                  <textarea id="suspend-reason" value={suspendReason} onChange={(e) => setSuspendReason(e.target.value)} rows={2}
+                    placeholder="e.g. Several clients reported no-shows."
+                    className="w-full resize-none border-b border-white/15 bg-transparent pb-3 text-[15px] text-white outline-none placeholder:text-white/20 focus:border-green-400" />
+                </div>
+              )}
+
+              <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row">
+                <button onClick={close} disabled={busy} className={`${btnGhost} flex-1 py-3`}>Cancel</button>
+                <button onClick={() => handleUserAction(user, action, suspendReason.trim())}
+                  disabled={busy || (isDelete && !typedOk)}
+                  className={`inline-flex flex-1 items-center justify-center gap-2 rounded-full px-5 py-3 text-[14px] font-medium transition disabled:opacity-40 ${isDelete ? 'bg-red-500 text-white hover:bg-red-400' : 'bg-amber-300 text-[#080f0a] hover:bg-amber-200'}`}>
+                  {busy && <Loader2 size={15} className="animate-spin" />} {isDelete ? 'Delete for good' : 'Suspend'}
+                </button>
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 }
